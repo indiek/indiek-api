@@ -12,7 +12,7 @@ from ik.blob import (
     ArchiveIndex,
 )
 
-IK_CONFIG = ...  # path to ik .env
+IK_CONFIG = ".env"  # path to ik .env
 # If you need on-the-fly TIFF conversion for the browser, Pillow is highly effective
 try:
     from PIL import Image  # TODO: add pillow as dependency
@@ -188,32 +188,38 @@ def get_blob(hash_str: str):
     Resolves the sha256 hash to the physical file in the nested archive directory.
     If the file is a TIFF image, it optionally converts it to WebP for the browser.
     """
+
+    load_dotenv(IK_CONFIG)
+
+    # SETUP ARCHIVE
+    rootp = os.getenv("IK_ARCHIVE_PATH")  # TODO: use pathlib.Path
+    infra_blob = InfraBlobStore(archive_root=rootp)
+
     # Build path: archive/blobs/sha256/xx/yy/hash
     dir1 = hash_str[0:2]
     dir2 = hash_str[2:4]
 
     # Use your project's absolute or relative root path
-    base_dir = Path("archive/blobs/sha256")
+    base_dir = Path(infra_blob.blobs_path)
     file_path = base_dir / dir1 / dir2 / hash_str
-
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Blob not found")
 
     # Simple heuristic to handle TIFFs if Pillow is installed
-    if HAS_PILLOW:
-        try:
-            with Image.open(file_path) as img:
-                if img.format in ["TIFF", "TIF"]:
-                    # Convert to a browser-friendly format in memory
-                    img_byte_arr = io.BytesIO()
-                    img.save(img_byte_arr, format="WEBP")
-                    img_byte_arr.seek(0)
-                    return Response(
-                        content=img_byte_arr.getvalue(), media_type="image/webp"
-                    )
-        except Exception:
-            # If Pillow fails to parse it as an image, fall back to serving it as plain text/binary
-            pass
+    # if HAS_PILLOW:
+    #     try:
+    #         with Image.open(file_path) as img:
+    #             if img.format in ["TIFF", "TIF"]:
+    #                 # Convert to a browser-friendly format in memory
+    #                 img_byte_arr = io.BytesIO()
+    #                 img.save(img_byte_arr, format="WEBP")
+    #                 img_byte_arr.seek(0)
+    #                 return Response(
+    #                     content=img_byte_arr.getvalue(), media_type="image/webp"
+    #                 )
+    #     except Exception:
+    #         # If Pillow fails to parse it as an image, fall back to serving it as plain text/binary
+    #         pass
 
     # For text blobs or if no conversion is needed
     return FileResponse(file_path)
