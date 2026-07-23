@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -78,18 +79,6 @@ class TagDictionaryResponse(BaseModel):
     tags: Dict[str, TagInfo]
 
 
-def initialize_ik() -> ArchiveIndex:
-    """Initialize IndieK's archive."""
-    load_dotenv(IK_CONFIG)
-
-    rootp = Path(os.getenv("IK_ARCHIVE_PATH", ".")).expanduser().resolve()
-    infra_blob = InfraBlobStore(archive_root=str(rootp))
-    elog = InfraEventLog(str(rootp))
-    meta_log = InfraEventLog(str(rootp / "meta"))
-    archive = Archive(elog, meta_log, infra_blob)
-    return ArchiveIndex(archive)
-
-
 def _iso_timestamp() -> str:
     return (
         datetime.now(timezone.utc)
@@ -97,6 +86,55 @@ def _iso_timestamp() -> str:
         .isoformat()
         .replace("+00:00", "Z")
     )
+
+
+def _workspace_dir(network_id: Optional[str] = None) -> Path:
+    workspace_id = network_id or "default"
+    return WORKSPACE_ROOT / workspace_id
+
+
+def _resolve_archive_root(network_id: Optional[str] = None) -> Path:
+    workspace_id = network_id or "default"
+    workspace = workspaces.get(workspace_id)
+    if workspace is None:
+        workspace = _get_workspace_or_default(workspace_id)
+
+    workspace_dir = _workspace_dir(workspace_id)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    archive_root = workspace.get("archive_root")
+    if archive_root:
+        return Path(archive_root).expanduser().resolve()
+
+    archive_root_path = workspace_dir / "archive"
+    archive_root_path.mkdir(parents=True, exist_ok=True)
+
+    uploaded_file = workspace.get("uploaded_file")
+    if workspace.get("source_type") == "upload" and uploaded_file:
+        uploaded_path = Path(uploaded_file)
+        if (
+            uploaded_path.exists()
+            and uploaded_path.is_file()
+            and uploaded_path.suffix.lower() == ".zip"
+        ):
+            if not any(archive_root_path.iterdir()):
+                with zipfile.ZipFile(uploaded_path, "r") as archive_zip:
+                    archive_zip.extractall(archive_root_path)
+
+    workspace["archive_root"] = str(archive_root_path)
+    return archive_root_path
+
+
+def initialize_ik(network_id: Optional[str] = None) -> ArchiveIndex:
+    """Initialize IndieK's archive for a given workspace."""
+    load_dotenv(IK_CONFIG)
+
+    rootp = _resolve_archive_root(network_id)
+    infra_blob = InfraBlobStore(archive_root=str(rootp))
+    elog = InfraEventLog(str(rootp))
+    meta_log = InfraEventLog(str(rootp / "meta"))
+    archive = Archive(elog, meta_log, infra_blob)
+    return ArchiveIndex(archive)
 
 
 def _get_workspace_or_default(network_id: Optional[str] = None) -> Dict[str, Any]:
@@ -133,7 +171,7 @@ def load_graph_data(network_id: Optional[str] = None):
     tag_lookup: Dict[str, Dict[str, str]] = {}
 
     try:
-        archive_idx = initialize_ik()
+        archive_idx = initialize_ik(workspace_id)
 
         def get_item_tags(info):
             try:
@@ -244,6 +282,7 @@ async def create_workspace(request: Request):
         workspace_record["uploaded_file"] = str(destination)
 
     workspaces[network_id] = workspace_record
+    _resolve_archive_root(network_id)
     load_graph_data(network_id)
 
     return CreateWorkspaceResponse(network_id=network_id)
@@ -303,7 +342,7 @@ def get_blob(hash_str: str, network_id: Optional[str] = Query(default=None)):
     _get_workspace_or_default(network_id)
 
     load_dotenv(IK_CONFIG)
-    rootp = Path(os.getenv("IK_ARCHIVE_PATH", ".")).expanduser().resolve()
+    rootp = _resolve_archive_root(network_id)
     infra_blob = InfraBlobStore(archive_root=str(rootp))
 
     dir1 = hash_str[0:2]
