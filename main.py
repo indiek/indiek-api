@@ -1,19 +1,21 @@
+import json
 import os
+import shutil
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
-import networkx as nx
-from ik.blob import (
-    InfraEventLog,
-    InfraBlobStore,
-    Archive,
-    ArchiveIndex,
-)
+from typing import Any, Dict, Optional
 
-IK_CONFIG = ".env"  # path to ik .env
-# If you need on-the-fly TIFF conversion for the browser, Pillow is highly effective
+from dotenv import load_dotenv
+from fastapi import File, Form, FastAPI, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+import networkx as nx
+from pydantic import BaseModel
+from ik.blob import Archive, ArchiveIndex, InfraBlobStore, InfraEventLog
+
+IK_CONFIG = ".env"
+
 try:
     from PIL import Image  # TODO: add pillow as dependency
     import io
@@ -24,132 +26,255 @@ except ImportError:
 
 app = FastAPI(title="Graph Data API")
 
-# Configure CORS to allow Next.js (typically running on localhost:3000) to fetch data
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# -------------------------------------------------------------------
-# 1. Global State & Data Loading
-# -------------------------------------------------------------------
+WORKSPACE_ROOT = Path(__file__).resolve().parent / ".workspaces"
+WORKSPACE_ROOT.mkdir(exist_ok=True)
 
-# You can replace this initialization with your existing Python logic.
-# The assumption is G contains the base nodes and edges, and node data includes attached tags.
 G = nx.DiGraph()
-tags_db = {}
+tags_db: Dict[str, Dict[str, str]] = {}
+workspaces: Dict[str, Dict[str, Any]] = {}
+workspace_graphs: Dict[str, nx.DiGraph] = {}
+workspace_tags: Dict[str, Dict[str, Dict[str, str]]] = {}
+
+
+class CreateWorkspaceURLRequest(BaseModel):
+    sourceType: str
+    url: Optional[str] = None
+
+
+class CreateWorkspaceResponse(BaseModel):
+    network_id: str
+
+
+class GraphNode(BaseModel):
+    id: str
+    blob_hash: Optional[str] = None
+    tags: Optional[list[str]] = None
+
+
+class GraphLink(BaseModel):
+    id: Optional[str] = None
+    source: str
+    target: str
+    blob_hash: Optional[str] = None
+    tags: Optional[list[str]] = None
+
+
+class GraphResponse(BaseModel):
+    nodes: list[GraphNode]
+    links: list[GraphLink]
+
+
+class TagInfo(BaseModel):
+    name: str
+    description: str
+
+
+class TagDictionaryResponse(BaseModel):
+    tags: Dict[str, TagInfo]
 
 
 def initialize_ik() -> ArchiveIndex:
-    """Initialize IndieK's archive"""
+    """Initialize IndieK's archive."""
     load_dotenv(IK_CONFIG)
 
-    # SETUP ARCHIVE
-    rootp = os.getenv("IK_ARCHIVE_PATH")  # TODO: use pathlib.Path
-    infra_blob = InfraBlobStore(archive_root=rootp)
-    elog = InfraEventLog(rootp)
-    meta_log = InfraEventLog(os.path.join(rootp, "meta"))
+    rootp = Path(os.getenv("IK_ARCHIVE_PATH", ".")).expanduser().resolve()
+    infra_blob = InfraBlobStore(archive_root=str(rootp))
+    elog = InfraEventLog(str(rootp))
+    meta_log = InfraEventLog(str(rootp / "meta"))
     archive = Archive(elog, meta_log, infra_blob)
     return ArchiveIndex(archive)
 
 
-def load_graph_data():
+def _iso_timestamp() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _get_workspace_or_default(network_id: Optional[str] = None) -> Dict[str, Any]:
+    workspace_id = network_id or "default"
+    if workspace_id in workspaces:
+        return workspaces[workspace_id]
+
+    if workspace_id == "default":
+        workspace = {
+            "network_id": workspace_id,
+            "source_type": "archive",
+            "created_at": _iso_timestamp(),
+            "source_url": None,
+            "uploaded_file": None,
+        }
+        workspaces[workspace_id] = workspace
+        return workspace
+
+    raise HTTPException(status_code=404, detail="Workspace not found")
+
+
+def load_graph_data(network_id: Optional[str] = None):
+    """Populate graph data for a workspace.
+
+    The backend currently uses the archive data as the canonical graph source and
+    exposes it through workspace-scoped routes.
     """
-    Placeholder for your existing parsing logic.
-    You will populate `G` and `tags_db` here.
-    """
+
+    workspace_id = network_id or "default"
+    if workspace_id in workspace_graphs and workspace_id in workspace_tags:
+        return workspace_graphs[workspace_id], workspace_tags[workspace_id]
+
+    graph = nx.DiGraph()
+    tag_lookup: Dict[str, Dict[str, str]] = {}
+
+    try:
+        archive_idx = initialize_ik()
+
+        def get_item_tags(info):
+            try:
+                return info["tags"]
+            except KeyError:
+                return []
+
+        for item_uuid, item_info in archive_idx.id_info_.items():
+            body = item_info["body"]
+            uuid_str = str(item_uuid)
+            try:
+                archive_idx.assert_node_is_tag(item_uuid)
+                tag_lookup[uuid_str] = {
+                    "name": body["name"],
+                    "description": body["description"],
+                }
+            except AssertionError:
+                if item_info["is_meta"]:
+                    continue
+                if item_info["is_edge"]:
+                    graph.add_edge(
+                        body["source_node"],
+                        body["target_node"],
+                        blob_hash=body["blob_hash"],
+                        id=body["edge_id"],
+                        tags=get_item_tags(item_info),
+                    )
+                else:
+                    graph.add_node(
+                        body["node_id"],
+                        blob_hash=body["blob_hash"],
+                        tags=get_item_tags(item_info),
+                    )
+    except Exception:
+        # Fall back to the empty graph if the archive cannot be initialized.
+        pass
+
+    workspace_graphs[workspace_id] = graph
+    workspace_tags[workspace_id] = tag_lookup
+
     global G, tags_db
-
-    archive_idx = initialize_ik()
-
-    # Example Tag Dictionary format expected by the frontend
-    # tags_db = {
-    #     "019f45e2-afb0-7521-bd6a-9399af9329a6": {
-    #         "name": "reaction",
-    #         "description": "reaction to others' words",
-    #     },
-    #     "019f45e2-b14c-77b2-a995-369947400acc": {
-    #         "name": "discussion",
-    #         "description": "discussion about God",
-    #     },
-    # }
-
-    # Example NetworkX population
-    # Important: attach the list of tag UUIDs to the node attributes
-    # G.add_node(
-    #     "019f45e2-ac75-7522-8cf9-8c9faa4f851e",
-    #     blob_hash="9aa9c8a7366899a159fe7cc523037b24f96def9f60a45f367d91a63ed694bf3a",
-    #     tags=["019f45e2-b14c-77b2-a995-369947400acc"],
-    # )
-
-    # G.add_node(
-    #     "019f45e2-ae04-72c9-8ac0-3eeda726daa9",
-    #     blob_hash="996d0722facdeae9c1db6b25ab581046328a9b2244be1cbf7f64ddcfc82ed907",
-    #     tags=[],
-    # )
-
-    # G.add_edge(
-    #     "019f45e2-ae04-72c9-8ac0-3eeda726daa9",
-    #     "019f45e2-ac75-7522-8cf9-8c9faa4f851e",
-    #     id="019f45e2-aeda-7253-92e4-d650a05e480b",
-    #     tags=["019f45e2-afb0-7521-bd6a-9399af9329a6"],
-    # )
-    def get_item_tags(info):
-        try:
-            return info["tags"]
-        except KeyError:
-            return []
-
-    for item_uuid, item_info in archive_idx.id_info_.items():
-        body = item_info["body"]
-        uuid_str = str(item_uuid)
-        try:  # a tag
-            archive_idx.assert_node_is_tag(item_uuid)
-            tags_db[uuid_str] = {
-                "name": body["name"],
-                "description": body["description"],
-            }
-        except AssertionError:  # not a tag
-            if item_info["is_meta"]:
-                continue
-            if item_info["is_edge"]:
-                G.add_edge(
-                    body["source_node"],
-                    body["target_node"],
-                    blob_hash=body["blob_hash"],
-                    id=body["edge_id"],
-                    tags=get_item_tags(item_info),
-                )
-            else:
-                G.add_node(
-                    body["node_id"],
-                    blob_hash=body["blob_hash"],
-                    tags=get_item_tags(item_info),
-                )
+    G = graph
+    tags_db = tag_lookup
+    return graph, tag_lookup
 
 
-# Load data into RAM on server startup
-@app.on_event("startup")  # TODO: deal with deprecation
+async def _parse_workspace_payload(
+    request: Request,
+) -> tuple[str, Optional[str], Optional[UploadFile]]:
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form_data = await request.form()
+        source_type = str(form_data.get("sourceType") or "upload")
+        url = str(form_data.get("url") or "") or None
+        uploaded_file = form_data.get("file")
+        if uploaded_file is not None and hasattr(uploaded_file, "filename"):
+            return source_type, url, uploaded_file
+        return source_type, url, None
+
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        payload = {}
+
+    source_type = str(payload.get("sourceType") or "url")
+    url = payload.get("url")
+    return source_type, url if isinstance(url, str) else None, None
+
+
+@app.on_event("startup")
 def startup_event():
-    load_graph_data()
+    load_graph_data("default")
 
 
-# -------------------------------------------------------------------
-# 2. API Endpoints
-# -------------------------------------------------------------------
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 
-@app.get("/api/graph")
-def get_graph():
-    """
-    Translates the NetworkX graph into the strict JSON schema
-    required by `react-force-graph`: { "nodes": [...], "links": [...] }
-    """
+@app.post("/api/workspaces", response_model=CreateWorkspaceResponse)
+async def create_workspace(request: Request):
+    source_type, url, uploaded_file = await _parse_workspace_payload(request)
+
+    if source_type == "url":
+        if not url:
+            raise HTTPException(status_code=400, detail="url is required")
+    elif source_type == "upload":
+        if uploaded_file is None:
+            raise HTTPException(status_code=400, detail="file is required")
+    else:
+        raise HTTPException(
+            status_code=400, detail="sourceType must be 'url' or 'upload'"
+        )
+
+    network_id = str(uuid.uuid4())
+    workspace_dir = WORKSPACE_ROOT / network_id
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    workspace_record: Dict[str, Any] = {
+        "network_id": network_id,
+        "source_type": source_type,
+        "created_at": _iso_timestamp(),
+        "source_url": url,
+        "uploaded_file": None,
+    }
+
+    if uploaded_file is not None:
+        destination = workspace_dir / (uploaded_file.filename or "workspace-upload.zip")
+        with destination.open("wb") as buffer:
+            shutil.copyfileobj(uploaded_file.file, buffer)
+        await uploaded_file.close()
+        workspace_record["uploaded_file"] = str(destination)
+
+    workspaces[network_id] = workspace_record
+    load_graph_data(network_id)
+
+    return CreateWorkspaceResponse(network_id=network_id)
+
+
+@app.get("/api/workspaces")
+def list_workspaces():
+    return [
+        {
+            "network_id": workspace["network_id"],
+            "source_type": workspace["source_type"],
+            "created_at": workspace["created_at"],
+        }
+        for workspace in workspaces.values()
+    ]
+
+
+@app.get("/api/graph", response_model=GraphResponse)
+def get_graph(network_id: Optional[str] = Query(default=None)):
+    workspace = _get_workspace_or_default(network_id)
+    graph, _ = load_graph_data(workspace["network_id"])
+
     nodes = []
-    for node_id, data in G.nodes(data=True):
+    for node_id, data in graph.nodes(data=True):
         nodes.append(
             {
                 "id": node_id,
@@ -159,74 +284,47 @@ def get_graph():
         )
 
     links = []
-    for source, target, data in G.edges(data=True):
+    for source, target, data in graph.edges(data=True):
         links.append(
             {
                 "id": data.get("id"),
                 "source": source,
                 "target": target,
+                "blob_hash": data.get("blob_hash"),
                 "tags": data.get("tags", []),
             }
         )
 
-    return {"nodes": nodes, "links": links}
+    return GraphResponse(nodes=nodes, links=links)
 
 
-@app.get("/api/tags")
-def get_tags():
-    """
-    Returns the dictionary of tags.
-    The Next.js front-end will use this to populate its search-first dashboard
-    and resolve UUIDs to human-readable names.
-    """
-    return tags_db
+@app.get("/api/tags", response_model=TagDictionaryResponse)
+def get_tags(network_id: Optional[str] = Query(default=None)):
+    workspace = _get_workspace_or_default(network_id)
+    _, tags = load_graph_data(workspace["network_id"])
+    return TagDictionaryResponse(tags=tags)
 
 
 @app.get("/api/blob/{hash_str}")
-def get_blob(hash_str: str):
-    """
-    Resolves the sha256 hash to the physical file in the nested archive directory.
-    If the file is a TIFF image, it optionally converts it to WebP for the browser.
-    """
+def get_blob(hash_str: str, network_id: Optional[str] = Query(default=None)):
+    _get_workspace_or_default(network_id)
 
     load_dotenv(IK_CONFIG)
+    rootp = Path(os.getenv("IK_ARCHIVE_PATH", ".")).expanduser().resolve()
+    infra_blob = InfraBlobStore(archive_root=str(rootp))
 
-    # SETUP ARCHIVE
-    rootp = os.getenv("IK_ARCHIVE_PATH")  # TODO: use pathlib.Path
-    infra_blob = InfraBlobStore(archive_root=rootp)
-
-    # Build path: archive/blobs/sha256/xx/yy/hash
     dir1 = hash_str[0:2]
     dir2 = hash_str[2:4]
-
-    # Use your project's absolute or relative root path
     base_dir = Path(infra_blob.blobs_path)
     file_path = base_dir / dir1 / dir2 / hash_str
+
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Blob not found")
 
-    # Simple heuristic to handle TIFFs if Pillow is installed
-    # if HAS_PILLOW:
-    #     try:
-    #         with Image.open(file_path) as img:
-    #             if img.format in ["TIFF", "TIF"]:
-    #                 # Convert to a browser-friendly format in memory
-    #                 img_byte_arr = io.BytesIO()
-    #                 img.save(img_byte_arr, format="WEBP")
-    #                 img_byte_arr.seek(0)
-    #                 return Response(
-    #                     content=img_byte_arr.getvalue(), media_type="image/webp"
-    #                 )
-    #     except Exception:
-    #         # If Pillow fails to parse it as an image, fall back to serving it as plain text/binary
-    #         pass
-
-    # For text blobs or if no conversion is needed
     return FileResponse(file_path)
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    # Run the server on port 8000
     uvicorn.run(app, host="0.0.0.0", port=8000)
