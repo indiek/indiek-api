@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
-from fastapi import File, Form, FastAPI, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import networkx as nx
@@ -17,8 +17,7 @@ from ik.blob import Archive, ArchiveIndex, InfraBlobStore, InfraEventLog
 IK_CONFIG = ".env"
 
 try:
-    from PIL import Image  # TODO: add pillow as dependency
-    import io
+    import PIL  # Optional for future image conversion
 
     HAS_PILLOW = True
 except ImportError:
@@ -37,8 +36,6 @@ app.add_middleware(
 WORKSPACE_ROOT = Path(__file__).resolve().parent / ".workspaces"
 WORKSPACE_ROOT.mkdir(exist_ok=True)
 
-G = nx.DiGraph()
-tags_db: Dict[str, Dict[str, str]] = {}
 workspaces: Dict[str, Dict[str, Any]] = {}
 workspace_graphs: Dict[str, nx.DiGraph] = {}
 workspace_tags: Dict[str, Dict[str, Dict[str, str]]] = {}
@@ -170,16 +167,12 @@ def load_graph_data(network_id: Optional[str] = None):
                         blob_hash=body["blob_hash"],
                         tags=get_item_tags(item_info),
                     )
-    except Exception:
-        # Fall back to the empty graph if the archive cannot be initialized.
+    except KeyError, TypeError, ValueError, AssertionError:
+        # Fall back to the empty graph if the archive contents are incomplete.
         pass
 
     workspace_graphs[workspace_id] = graph
     workspace_tags[workspace_id] = tag_lookup
-
-    global G, tags_db
-    G = graph
-    tags_db = tag_lookup
     return graph, tag_lookup
 
 
