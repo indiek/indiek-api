@@ -1,5 +1,6 @@
 import json
-import os
+import sys
+import logging
 import shutil
 import uuid
 import zipfile
@@ -15,6 +16,11 @@ import networkx as nx
 from pydantic import BaseModel
 from ik.blob import Archive, ArchiveIndex, InfraBlobStore, InfraEventLog
 
+logger = logging.getLogger()
+logger.addHandler(logging.StreamHandler(sys.stdout))
+
+logger.setLevel(logging.DEBUG)  # set to logging.DEBUG if needed
+logger.debug("DEBUGGING ACTIVATED")
 IK_CONFIG = ".env"
 
 try:
@@ -106,10 +112,11 @@ def _resolve_archive_root(network_id: Optional[str] = None) -> Path:
     if archive_root:
         return Path(archive_root).expanduser().resolve()
 
-    archive_root_path = workspace_dir / "archive"
+    archive_root_path = workspace_dir  # / "archive"
     archive_root_path.mkdir(parents=True, exist_ok=True)
 
     uploaded_file = workspace.get("uploaded_file")
+
     if workspace.get("source_type") == "upload" and uploaded_file:
         uploaded_path = Path(uploaded_file)
         if (
@@ -117,12 +124,13 @@ def _resolve_archive_root(network_id: Optional[str] = None) -> Path:
             and uploaded_path.is_file()
             and uploaded_path.suffix.lower() == ".zip"
         ):
-            if not any(archive_root_path.iterdir()):
+            if not (archive_root_path / uploaded_path.stem).exists():
                 with zipfile.ZipFile(uploaded_path, "r") as archive_zip:
                     archive_zip.extractall(archive_root_path)
-
-    workspace["archive_root"] = str(archive_root_path)
-    return archive_root_path
+    network_name = Path(uploaded_file).stem
+    workspace["archive_root"] = str(archive_root_path / network_name)
+    logger.debug(f"{workspace["archive_root"]=}")
+    return archive_root_path / network_name
 
 
 def initialize_ik(network_id: Optional[str] = None) -> ArchiveIndex:
@@ -130,6 +138,7 @@ def initialize_ik(network_id: Optional[str] = None) -> ArchiveIndex:
     load_dotenv(IK_CONFIG)
 
     rootp = _resolve_archive_root(network_id)
+    logger.debug(f"{rootp=}")
     infra_blob = InfraBlobStore(archive_root=str(rootp))
     elog = InfraEventLog(str(rootp))
     meta_log = InfraEventLog(str(rootp / "meta"))
