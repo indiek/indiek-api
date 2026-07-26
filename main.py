@@ -127,9 +127,9 @@ def _resolve_archive_root(network_id: Optional[str] = None) -> Path:
             if not (archive_root_path / uploaded_path.stem).exists():
                 with zipfile.ZipFile(uploaded_path, "r") as archive_zip:
                     archive_zip.extractall(archive_root_path)
-    network_name = Path(uploaded_file).stem
+    network_name = Path(uploaded_file).stem if uploaded_file else ""
     workspace["archive_root"] = str(archive_root_path / network_name)
-    logger.debug(f"{workspace["archive_root"]=}")
+    logger.debug(f"workspace['archive_root']={workspace['archive_root']}")
     return archive_root_path / network_name
 
 
@@ -182,36 +182,37 @@ def load_graph_data(network_id: Optional[str] = None):
     try:
         archive_idx = initialize_ik(workspace_id)
 
-        def get_item_tags(info):
-            tags = info.get("tags", [])
+        def get_item_tags(item_info):
+            body = item_info.get("body", {}) if isinstance(item_info, dict) else {}
+            tags = body.get("tags", [])
             if not isinstance(tags, list):
                 return []
             return [str(tag) for tag in tags]
 
         for item_uuid, item_info in archive_idx.id_info_.items():
-            body = item_info["body"]
+            body = item_info.get("body", {})
             uuid_str = str(item_uuid)
             try:
                 archive_idx.assert_node_is_tag(item_uuid)
                 tag_lookup[uuid_str] = {
-                    "name": body["name"],
-                    "description": body["description"],
+                    "name": body.get("name", ""),
+                    "description": body.get("description", ""),
                 }
             except AssertionError:
-                if item_info["is_meta"]:
+                if item_info.get("is_meta"):
                     continue
-                if item_info["is_edge"]:
+                if item_info.get("is_edge"):
                     graph.add_edge(
-                        body["source_node"],
-                        body["target_node"],
-                        blob_hash=body["blob_hash"],
-                        id=body["edge_id"],
+                        body.get("source_node"),
+                        body.get("target_node"),
+                        blob_hash=body.get("blob_hash"),
+                        id=body.get("edge_id"),
                         tags=get_item_tags(item_info),
                     )
                 else:
                     graph.add_node(
-                        body["node_id"],
-                        blob_hash=body["blob_hash"],
+                        body.get("node_id"),
+                        blob_hash=body.get("blob_hash"),
                         tags=get_item_tags(item_info),
                     )
     except KeyError, TypeError, ValueError, AssertionError:
