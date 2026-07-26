@@ -183,10 +183,10 @@ def load_graph_data(network_id: Optional[str] = None):
         archive_idx = initialize_ik(workspace_id)
 
         def get_item_tags(info):
-            try:
-                return info["tags"]
-            except KeyError:
+            tags = info.get("tags", [])
+            if not isinstance(tags, list):
                 return []
+            return [str(tag) for tag in tags]
 
         for item_uuid, item_info in archive_idx.id_info_.items():
             body = item_info["body"]
