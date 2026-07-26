@@ -6,7 +6,7 @@ import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
@@ -182,12 +182,17 @@ def load_graph_data(network_id: Optional[str] = None):
     try:
         archive_idx = initialize_ik(workspace_id)
 
-        def get_item_tags(item_info):
-            body = item_info.get("body", {}) if isinstance(item_info, dict) else {}
-            tags = body.get("tags", [])
-            if not isinstance(tags, list):
-                return []
-            return [str(tag) for tag in tags]
+        def get_item_tags(item_info) -> List[str]:
+            """Get a list of tags applied to the item.
+
+            Args:
+                item_info (_type_): has a "tags" key, which points to a value that
+                    is a set of UUID. Each UUID is the UUID of a tag.
+
+            Returns:
+                _type_: list of tags (as strings)
+            """
+            return [str(tag) for tag in item_info["tags"]]
 
         for item_uuid, item_info in archive_idx.id_info_.items():
             body = item_info.get("body", {})
