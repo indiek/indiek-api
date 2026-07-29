@@ -23,6 +23,7 @@ logger.setLevel(logging.DEBUG)  # set to logging.DEBUG if needed
 logger.debug("DEBUGGING ACTIVATED")
 IK_CONFIG = ".env"
 
+
 try:
     import PIL  # Optional for future image conversion
 
@@ -61,6 +62,7 @@ class GraphNode(BaseModel):
     id: str
     blob_hash: Optional[str] = None
     tags: Optional[list[str]] = None
+    title: Optional[str] = None
 
 
 class GraphLink(BaseModel):
@@ -127,6 +129,7 @@ def _resolve_archive_root(network_id: Optional[str] = None) -> Path:
             if not (archive_root_path / uploaded_path.stem).exists():
                 with zipfile.ZipFile(uploaded_path, "r") as archive_zip:
                     archive_zip.extractall(archive_root_path)
+    # TODO: somewhere in this file the archive root path assumes the file's stem; but that stem does not need be the name of the folder that was zipped. Fix that
     network_name = Path(uploaded_file).stem if uploaded_file else ""
     workspace["archive_root"] = str(archive_root_path / network_name)
     logger.debug(f"workspace['archive_root']={workspace['archive_root']}")
@@ -219,6 +222,7 @@ def load_graph_data(network_id: Optional[str] = None):
                         body.get("node_id"),
                         blob_hash=body.get("blob_hash"),
                         tags=get_item_tags(item_info),
+                        title=body.get("title"),
                     )
     except KeyError, TypeError, ValueError, AssertionError:
         # Fall back to the empty graph if the archive contents are incomplete.
@@ -327,6 +331,7 @@ def get_graph(network_id: Optional[str] = Query(default=None)):
                 "id": node_id,
                 "blob_hash": data.get("blob_hash"),
                 "tags": data.get("tags", []),
+                "title": data.get("title"),
             }
         )
 
@@ -354,6 +359,7 @@ def get_tags(network_id: Optional[str] = Query(default=None)):
 
 @app.get("/api/blob/{hash_str}")
 def get_blob(hash_str: str, network_id: Optional[str] = Query(default=None)):
+    # TODO: find a way to send proper media_type in the header's response
     _get_workspace_or_default(network_id)
 
     load_dotenv(IK_CONFIG)
