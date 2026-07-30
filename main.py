@@ -48,6 +48,10 @@ workspaces: Dict[str, Dict[str, Any]] = {}
 workspace_graphs: Dict[str, nx.DiGraph] = {}
 workspace_tags: Dict[str, Dict[str, Dict[str, str]]] = {}
 
+# Maps last_event_hash -> network_id for fast duplicate detection.
+# Key: str (64-char hex), Value: str (network_id)
+archive_hash_index: Dict[str, str] = {}
+
 
 class CreateWorkspaceURLRequest(BaseModel):
     sourceType: str
@@ -63,6 +67,7 @@ class GraphNode(BaseModel):
     blob_hash: Optional[str] = None
     tags: Optional[list[str]] = None
     title: Optional[str] = None
+    author: Optional[str] = None
 
 
 class GraphLink(BaseModel):
@@ -71,6 +76,7 @@ class GraphLink(BaseModel):
     target: str
     blob_hash: Optional[str] = None
     tags: Optional[list[str]] = None
+    author: Optional[str] = None
 
 
 class GraphResponse(BaseModel):
@@ -99,6 +105,66 @@ def _iso_timestamp() -> str:
 def _workspace_dir(network_id: Optional[str] = None) -> Path:
     workspace_id = network_id or "default"
     return WORKSPACE_ROOT / workspace_id
+
+
+def _workspace_meta_path(network_id: str) -> Path:
+    return _workspace_dir(network_id) / "workspace.json"
+
+
+def _save_workspace_meta(workspace: Dict[str, Any]) -> None:
+    """Persist a workspace record to disk as workspace.json."""
+    network_id = workspace["network_id"]
+    meta_path = _workspace_meta_path(network_id)
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(json.dumps(workspace, indent=2), encoding="utf-8")
+
+
+def _load_workspace_meta(workspace_dir: Path) -> Optional[Dict[str, Any]]:
+    """Load a workspace record from its workspace.json sidecar file."""
+    meta_path = workspace_dir / "workspace.json"
+    if not meta_path.exists():
+        return None
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning(f"Could not load workspace meta from {meta_path}: {exc}")
+        return None
+
+
+def _load_all_workspaces_from_disk() -> None:
+    """Scan .workspaces/ and populate the in-memory workspaces dict.
+
+    This is called once on startup so that workspaces persisted across server
+    restarts are immediately visible via GET /api/workspaces.
+    """
+    for child in WORKSPACE_ROOT.iterdir():
+        if not child.is_dir():
+            continue
+        workspace_id = child.name
+        if workspace_id in workspaces:
+            continue  # already loaded (e.g. default)
+
+        record = _load_workspace_meta(child)
+        if record is None:
+            # Legacy workspace dir without a sidecar — synthesise a minimal record.
+            record = {
+                "network_id": workspace_id,
+                "source_type": "archive",
+                "created_at": _iso_timestamp(),
+                "source_url": None,
+                "uploaded_file": None,
+                "filename": None,
+                "last_event_hash": None,
+            }
+
+        workspaces[workspace_id] = record
+
+        # Rebuild the hash index from persisted records.
+        last_hash = record.get("last_event_hash")
+        if last_hash:
+            archive_hash_index[last_hash] = workspace_id
+
+    logger.info(f"Loaded {len(workspaces)} workspaces from disk.")
 
 
 def _resolve_archive_root(network_id: Optional[str] = None) -> Path:
@@ -161,11 +227,27 @@ def _get_workspace_or_default(network_id: Optional[str] = None) -> Dict[str, Any
             "created_at": _iso_timestamp(),
             "source_url": None,
             "uploaded_file": None,
+            "filename": None,
+            "last_event_hash": None,
         }
         workspaces[workspace_id] = workspace
         return workspace
 
     raise HTTPException(status_code=404, detail="Workspace not found")
+
+
+def _get_last_event_hash_for_archive(rootp: Path) -> Optional[str]:
+    """Read the archive at rootp and return its last event hash, or None."""
+    try:
+        load_dotenv(IK_CONFIG)
+        infra_blob = InfraBlobStore(archive_root=str(rootp))
+        elog = InfraEventLog(str(rootp))
+        meta_log = InfraEventLog(str(rootp / "meta"))
+        archive = Archive(elog, meta_log, infra_blob)
+        return archive.last_event_hash_
+    except Exception as exc:
+        logger.warning(f"Could not compute last event hash for {rootp}: {exc}")
+        return None
 
 
 def load_graph_data(network_id: Optional[str] = None):
@@ -200,6 +282,7 @@ def load_graph_data(network_id: Optional[str] = None):
         for item_uuid, item_info in archive_idx.id_info_.items():
             body = item_info.get("body", {})
             uuid_str = str(item_uuid)
+            author = item_info.get("author")
             try:
                 archive_idx.assert_node_is_tag(item_uuid)
                 tag_lookup[uuid_str] = {
@@ -216,6 +299,7 @@ def load_graph_data(network_id: Optional[str] = None):
                         blob_hash=body.get("blob_hash"),
                         id=body.get("edge_id"),
                         tags=get_item_tags(item_info),
+                        author=author,
                     )
                 else:
                     graph.add_node(
@@ -223,8 +307,9 @@ def load_graph_data(network_id: Optional[str] = None):
                         blob_hash=body.get("blob_hash"),
                         tags=get_item_tags(item_info),
                         title=body.get("title"),
+                        author=author,
                     )
-    except KeyError, TypeError, ValueError, AssertionError:
+    except (KeyError, TypeError, ValueError, AssertionError):
         # Fall back to the empty graph if the archive contents are incomplete.
         pass
 
@@ -258,6 +343,7 @@ async def _parse_workspace_payload(
 
 @app.on_event("startup")
 def startup_event():
+    _load_all_workspaces_from_disk()
     load_graph_data("default")
 
 
@@ -285,23 +371,55 @@ async def create_workspace(request: Request):
     workspace_dir = WORKSPACE_ROOT / network_id
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
+    # Store the original filename (e.g. "mysnotes.zip") for display in the UI.
+    original_filename: Optional[str] = None
+
     workspace_record: Dict[str, Any] = {
         "network_id": network_id,
         "source_type": source_type,
         "created_at": _iso_timestamp(),
         "source_url": url,
         "uploaded_file": None,
+        "filename": None,
+        "last_event_hash": None,
     }
 
     if uploaded_file is not None:
-        destination = workspace_dir / (uploaded_file.filename or "workspace-upload.zip")
+        original_filename = uploaded_file.filename or "workspace-upload.zip"
+        destination = workspace_dir / original_filename
         with destination.open("wb") as buffer:
             shutil.copyfileobj(uploaded_file.file, buffer)
         await uploaded_file.close()
         workspace_record["uploaded_file"] = str(destination)
+        workspace_record["filename"] = original_filename
 
     workspaces[network_id] = workspace_record
-    _resolve_archive_root(network_id)
+
+    # Resolve (and extract) the archive so we can compute its last event hash.
+    archive_root = _resolve_archive_root(network_id)
+    last_hash = _get_last_event_hash_for_archive(archive_root)
+
+    if last_hash:
+        # Check for a duplicate archive.
+        existing_network_id = archive_hash_index.get(last_hash)
+        if existing_network_id and existing_network_id != network_id:
+            # Clean up the newly created (duplicate) workspace dir.
+            shutil.rmtree(workspace_dir, ignore_errors=True)
+            del workspaces[network_id]
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"This archive is already cached as workspace '{existing_network_id}'. "
+                    "Open that workspace instead of uploading again."
+                ),
+                headers={"X-Existing-Network-Id": existing_network_id},
+            )
+        workspace_record["last_event_hash"] = last_hash
+        archive_hash_index[last_hash] = network_id
+
+    # Persist workspace metadata to disk for future server restarts.
+    _save_workspace_meta(workspace_record)
+
     load_graph_data(network_id)
 
     return CreateWorkspaceResponse(network_id=network_id)
@@ -312,8 +430,10 @@ def list_workspaces():
     return [
         {
             "network_id": workspace["network_id"],
-            "source_type": workspace["source_type"],
-            "created_at": workspace["created_at"],
+            "source_type": workspace.get("source_type"),
+            "created_at": workspace.get("created_at"),
+            "filename": workspace.get("filename"),
+            "source_url": workspace.get("source_url"),
         }
         for workspace in workspaces.values()
     ]
@@ -332,6 +452,7 @@ def get_graph(network_id: Optional[str] = Query(default=None)):
                 "blob_hash": data.get("blob_hash"),
                 "tags": data.get("tags", []),
                 "title": data.get("title"),
+                "author": data.get("author"),
             }
         )
 
@@ -344,6 +465,7 @@ def get_graph(network_id: Optional[str] = Query(default=None)):
                 "target": target,
                 "blob_hash": data.get("blob_hash"),
                 "tags": data.get("tags", []),
+                "author": data.get("author"),
             }
         )
 
@@ -359,7 +481,6 @@ def get_tags(network_id: Optional[str] = Query(default=None)):
 
 @app.get("/api/blob/{hash_str}")
 def get_blob(hash_str: str, network_id: Optional[str] = Query(default=None)):
-    # TODO: find a way to send proper media_type in the header's response
     _get_workspace_or_default(network_id)
 
     load_dotenv(IK_CONFIG)
@@ -374,7 +495,26 @@ def get_blob(hash_str: str, network_id: Optional[str] = Query(default=None)):
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Blob not found")
 
-    return FileResponse(file_path)
+    # Attempt to determine the media type from the graph index so the frontend
+    # can distinguish images from text without needing to sniff bytes.
+    media_type: Optional[str] = None
+    try:
+        graph, _ = load_graph_data(network_id)
+        for _, data in graph.nodes(data=True):
+            blob_hash_raw = data.get("blob_hash") or ""
+            # blob_hash is stored as "sha256:<hex>"; hash_str is just the hex part
+            if blob_hash_raw.endswith(hash_str):
+                media_type = None  # FileResponse will use the file's own type
+                break
+        for _, _, data in graph.edges(data=True):
+            blob_hash_raw = data.get("blob_hash") or ""
+            if blob_hash_raw.endswith(hash_str):
+                media_type = None
+                break
+    except Exception:
+        pass
+
+    return FileResponse(file_path, media_type=media_type)
 
 
 if __name__ == "__main__":
