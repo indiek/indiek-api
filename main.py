@@ -68,6 +68,7 @@ class GraphNode(BaseModel):
     tags: Optional[list[str]] = None
     title: Optional[str] = None
     author: Optional[str] = None
+    blob_mime: Optional[str] = None
 
 
 class GraphLink(BaseModel):
@@ -77,6 +78,7 @@ class GraphLink(BaseModel):
     blob_hash: Optional[str] = None
     tags: Optional[list[str]] = None
     author: Optional[str] = None
+    blob_mime: Optional[str] = None
 
 
 class GraphResponse(BaseModel):
@@ -300,6 +302,7 @@ def load_graph_data(network_id: Optional[str] = None):
                         id=body.get("edge_id"),
                         tags=get_item_tags(item_info),
                         author=author,
+                        blob_mime=body.get("media_type"),
                     )
                 else:
                     graph.add_node(
@@ -308,8 +311,9 @@ def load_graph_data(network_id: Optional[str] = None):
                         tags=get_item_tags(item_info),
                         title=body.get("title"),
                         author=author,
+                        blob_mime=body.get("media_type"),
                     )
-    except (KeyError, TypeError, ValueError, AssertionError):
+    except KeyError, TypeError, ValueError, AssertionError:
         # Fall back to the empty graph if the archive contents are incomplete.
         pass
 
@@ -453,6 +457,7 @@ def get_graph(network_id: Optional[str] = Query(default=None)):
                 "tags": data.get("tags", []),
                 "title": data.get("title"),
                 "author": data.get("author"),
+                "blob_mime": data.get("blob_mime"),
             }
         )
 
@@ -466,6 +471,7 @@ def get_graph(network_id: Optional[str] = Query(default=None)):
                 "blob_hash": data.get("blob_hash"),
                 "tags": data.get("tags", []),
                 "author": data.get("author"),
+                "blob_mime": data.get("blob_mime"),
             }
         )
 
@@ -504,12 +510,14 @@ def get_blob(hash_str: str, network_id: Optional[str] = Query(default=None)):
             blob_hash_raw = data.get("blob_hash") or ""
             # blob_hash is stored as "sha256:<hex>"; hash_str is just the hex part
             if blob_hash_raw.endswith(hash_str):
-                media_type = None  # FileResponse will use the file's own type
+                media_type = data.get(
+                    "blob_mime"
+                )  # FileResponse will use the file's own type
                 break
         for _, _, data in graph.edges(data=True):
             blob_hash_raw = data.get("blob_hash") or ""
             if blob_hash_raw.endswith(hash_str):
-                media_type = None
+                media_type = data.get("blob_mime")
                 break
     except Exception:
         pass
