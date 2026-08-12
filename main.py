@@ -16,6 +16,10 @@ from fastapi.responses import FileResponse
 
 from ik.blob import InfraBlobStore
 from ik.create_node import create_node_from_content
+from ik.create_edge import create_base_edge
+import ik.create_node_tag as create_node_tag
+import ik.create_edge_tag as create_edge_tag
+import ik.set_tag as set_tag
 from ik.signing import get_signing_key
 from ik.supersede_node import create_supersede_event
 
@@ -23,9 +27,15 @@ import graph
 import workspaces
 from schemas import (
     CreateWorkspaceResponse,
+    EdgeMutationResponse,
+    EdgeWriteRequest,
     GraphResponse,
     NodeMutationResponse,
     NodeWriteRequest,
+    SetTagRequest,
+    SetTagResponse,
+    TagCreateRequest,
+    TagCreateResponse,
     TagDictionaryResponse,
 )
 
@@ -38,9 +48,8 @@ ENV_FILE = Path(__file__).resolve().parent / ".env"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Restore persistent workspaces and warm the default graph projection."""
+    """Restore persistent workspaces on startup."""
     workspaces.load_all_workspaces()
-    graph.load_graph_data("default")
     yield
 
 
@@ -73,11 +82,10 @@ def _writer_credentials():
     return public_key, signing_key
 
 
-def _refresh_workspace_after_write(network_id: str | None) -> None:
+def _refresh_workspace_after_write(network_id: str) -> None:
     """Invalidate projections and persist the latest archive chain head."""
-    workspace_id = network_id or "default"
-    graph.invalidate_graph(workspace_id)
-    workspaces.record_archive_head(workspace_id, graph.archive_last_event_hash(workspace_id))
+    graph.invalidate_graph(network_id)
+    workspaces.record_archive_head(network_id, graph.archive_last_event_hash(network_id))
 
 
 @app.get("/health")
@@ -111,8 +119,8 @@ def list_workspaces() -> list[dict[str, object]]:
 def get_graph(network_id: str | None = Query(default=None)) -> GraphResponse:
     """Return the current graph projection for one workspace."""
     workspace = workspaces.get_workspace(network_id)
-    network_id = workspace["network_id"]
-    graph_data, _ = graph.load_graph_data(network_id)
+    network_id_clean = workspace["network_id"]
+    graph_data, _ = graph.load_graph_data(network_id_clean)
     return GraphResponse(
         nodes=[
             {
@@ -194,6 +202,76 @@ def supersede_node(node_id: str, payload: NodeWriteRequest, network_id: str | No
     return NodeMutationResponse(node_id=updated_node_id, event_type="supersede_node")
 
 
+@app.post("/api/edges", response_model=EdgeMutationResponse, status_code=201)
+def create_edge_endpoint(payload: EdgeWriteRequest, network_id: str | None = Query(default=None)) -> EdgeMutationResponse:
+    """Create a directed edge in the base network of the workspace archive."""
+    workspace = workspaces.get_workspace(network_id)
+    public_key, signing_key = _writer_credentials()
+    archive_idx = graph.initialize_archive(workspace["network_id"])
+    try:
+        create_base_edge(
+            edge_content=payload.content,
+            edge_source=payload.source_node,
+            edge_target=payload.target_node,
+            curr_public_key=public_key,
+            curr_signing_key=signing_key,
+            archive_idx=archive_idx,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _refresh_workspace_after_write(workspace["network_id"])
+    return EdgeMutationResponse(status="ok")
+
+
+@app.post("/api/tags", response_model=TagCreateResponse, status_code=201)
+def create_tag_endpoint(payload: TagCreateRequest, network_id: str | None = Query(default=None)) -> TagCreateResponse:
+    """Create a new tag definition (node or edge tag)."""
+    workspace = workspaces.get_workspace(network_id)
+    public_key, signing_key = _writer_credentials()
+    archive_idx = graph.initialize_archive(workspace["network_id"])
+    try:
+        if payload.tag_type == "edge":
+            create_edge_tag.run(
+                tag_name=payload.name,
+                tag_description=payload.description,
+                curr_public_key=public_key,
+                curr_signing_key=signing_key,
+                archive_index=archive_idx,
+            )
+        else:
+            create_node_tag.run(
+                tag_name=payload.name,
+                tag_description=payload.description,
+                curr_public_key=public_key,
+                curr_signing_key=signing_key,
+                archive_idx=archive_idx,
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _refresh_workspace_after_write(workspace["network_id"])
+    return TagCreateResponse(status="ok")
+
+
+@app.post("/api/tags/set", response_model=SetTagResponse, status_code=200)
+def set_tag_endpoint(payload: SetTagRequest, network_id: str | None = Query(default=None)) -> SetTagResponse:
+    """Assign a tag to a target node or edge in the workspace."""
+    workspace = workspaces.get_workspace(network_id)
+    public_key, signing_key = _writer_credentials()
+    archive_idx = graph.initialize_archive(workspace["network_id"])
+    try:
+        set_tag.run(
+            edge_source=payload.tag_id,
+            underlying_target=payload.target_id,
+            curr_public_key=public_key,
+            curr_signing_key=signing_key,
+            archive_idx=archive_idx,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _refresh_workspace_after_write(workspace["network_id"])
+    return SetTagResponse(status="ok")
+
+
 @app.get("/api/blob/{hash_str}")
 def get_blob(hash_str: str, network_id: str | None = Query(default=None)) -> FileResponse:
     """Stream a managed blob using its MIME type from the current projection."""
@@ -219,3 +297,4 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

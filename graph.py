@@ -36,16 +36,15 @@ def archive_last_event_hash(network_id: str | None = None) -> str | None:
         return None
 
 
-def invalidate_graph(network_id: str | None = None) -> None:
+def invalidate_graph(network_id: str) -> None:
     """Discard cached graph and tag projections after an archive write."""
-    workspace_id = network_id or "default"
-    workspace_graphs.pop(workspace_id, None)
-    workspace_tags.pop(workspace_id, None)
+    workspace_graphs.pop(network_id, None)
+    workspace_tags.pop(network_id, None)
 
 
-def load_graph_data(network_id: str | None = None) -> tuple[nx.DiGraph, dict[str, dict[str, str]]]:
+def load_graph_data(network_id: str) -> tuple[nx.DiGraph, dict[str, dict[str, str]]]:
     """Build or retrieve the current graph projection for one workspace."""
-    workspace_id = network_id or "default"
+    workspace_id = network_id
     if workspace_id in workspace_graphs and workspace_id in workspace_tags:
         return workspace_graphs[workspace_id], workspace_tags[workspace_id]
 

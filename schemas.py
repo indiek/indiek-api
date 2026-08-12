@@ -80,3 +80,45 @@ class NodeMutationResponse(BaseModel):
 
     node_id: str
     event_type: str
+
+
+class EdgeWriteRequest(BaseModel):
+    """Payload for creating a new edge in the archive."""
+
+    source_node: str
+    target_node: str
+    content: str = ""
+
+
+class EdgeMutationResponse(BaseModel):
+    """Result of an edge creation request."""
+
+    status: str = "ok"
+
+
+class TagCreateRequest(BaseModel):
+    """Payload for creating a new node or edge tag."""
+
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="")
+    tag_type: str = Field(default="node")  # "node" or "edge"
+
+
+class TagCreateResponse(BaseModel):
+    """Result of a tag creation request."""
+
+    status: str = "ok"
+
+
+class SetTagRequest(BaseModel):
+    """Payload for tagging a node or edge."""
+
+    tag_id: str
+    target_id: str
+
+
+class SetTagResponse(BaseModel):
+    """Result of setting a tag."""
+
+    status: str = "ok"
+

@@ -28,7 +28,9 @@ def iso_timestamp() -> str:
 
 def workspace_dir(network_id: str | None = None) -> Path:
     """Return the on-disk directory for a workspace."""
-    return WORKSPACE_ROOT / (network_id or "default")
+    if not network_id:
+        raise HTTPException(status_code=400, detail="network_id is required")
+    return WORKSPACE_ROOT / network_id
 
 
 def save_workspace_meta(workspace: dict[str, Any]) -> None:
@@ -70,23 +72,10 @@ def load_all_workspaces() -> None:
 
 
 def get_workspace(network_id: str | None = None) -> dict[str, Any]:
-    """Return an existing workspace, creating the local default when needed."""
-    workspace_id = network_id or "default"
-    if workspace_id in workspaces:
-        return workspaces[workspace_id]
-    if workspace_id == "default":
-        record = {
-            "network_id": workspace_id,
-            "source_type": "archive",
-            "created_at": iso_timestamp(),
-            "source_url": None,
-            "uploaded_file": None,
-            "filename": None,
-            "last_event_hash": None,
-        }
-        workspaces[workspace_id] = record
-        return record
-    raise HTTPException(status_code=404, detail="Workspace not found")
+    """Return an existing workspace."""
+    if not network_id or network_id not in workspaces:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return workspaces[network_id]
 
 
 def _safe_extract_zip(archive: zipfile.ZipFile, destination: Path) -> None:
