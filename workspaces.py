@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import HTTPException, Request, UploadFile
+from fastapi import HTTPException, Request
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,12 @@ archive_hash_index: dict[str, str] = {}
 
 def iso_timestamp() -> str:
     """Return a compact UTC timestamp for workspace metadata."""
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def workspace_dir(network_id: str | None = None) -> Path:
@@ -84,7 +90,9 @@ def _safe_extract_zip(archive: zipfile.ZipFile, destination: Path) -> None:
     for member in archive.infolist():
         target = (destination / member.filename).resolve()
         if destination not in target.parents and target != destination:
-            raise HTTPException(status_code=400, detail="ZIP archive contains an unsafe path")
+            raise HTTPException(
+                status_code=400, detail="ZIP archive contains an unsafe path"
+            )
     archive.extractall(destination)
 
 
@@ -115,18 +123,28 @@ def resolve_archive_root(network_id: str | None = None) -> Path:
     return archive_root.resolve()
 
 
-async def parse_workspace_payload(request: Request) -> tuple[str, str | None, UploadFile | None]:
+async def parse_workspace_payload(
+    request: Request,
+) -> tuple[str, str | None, StarletteUploadFile | None]:
     """Read either JSON or multipart workspace creation input."""
     if "multipart/form-data" in request.headers.get("content-type", ""):
         form = await request.form()
         file = form.get("file")
-        return str(form.get("sourceType") or "upload"), str(form.get("url") or "") or None, file if isinstance(file, UploadFile) else None
+        return (
+            str(form.get("sourceType") or "upload"),
+            str(form.get("url") or "") or None,
+            file if isinstance(file, StarletteUploadFile) else None,
+        )
     try:
         payload = await request.json()
-    except (ValueError, json.JSONDecodeError):
+    except ValueError, json.JSONDecodeError:
         payload = {}
     url = payload.get("url")
-    return str(payload.get("sourceType") or "url"), url if isinstance(url, str) else None, None
+    return (
+        str(payload.get("sourceType") or "url"),
+        url if isinstance(url, str) else None,
+        None,
+    )
 
 
 async def create_workspace(request: Request) -> dict[str, Any]:
@@ -137,7 +155,9 @@ async def create_workspace(request: Request) -> dict[str, Any]:
     if source_type == "upload" and uploaded_file is None:
         raise HTTPException(status_code=400, detail="file is required")
     if source_type not in {"url", "upload"}:
-        raise HTTPException(status_code=400, detail="sourceType must be 'url' or 'upload'")
+        raise HTTPException(
+            status_code=400, detail="sourceType must be 'url' or 'upload'"
+        )
 
     network_id = str(uuid.uuid4())
     directory = workspace_dir(network_id)
