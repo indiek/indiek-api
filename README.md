@@ -54,6 +54,11 @@ Dependency changes: `uv add <pkg>` / `uv add --dev <pkg>` / `uv remove <pkg>` (u
 
 Before committing: `uv run ruff check . && uv run ruff format --check . && uv run pytest`.
 
+To launch the UI with NextJS already built:
+```{bash}
+export INDIEK_API_ENV_FILE=".env" && INDIEK_API_STATIC_DIR="/Users/adrianradillo/prog/indiek/webUI/custom-graph-explorer/out" && uv run python -m indiek_api
+```
+
 The server does not auto-reload: restart it after code changes.
 
 ---
