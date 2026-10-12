@@ -1,23 +1,30 @@
 [project]
-name = "indiek-backend-api"
-version = "0.2.0"
-description = "Add your description here"
+name = "indiek-api"
+version = "0.10.0"
+description = "Local HTTP API serving IndieK archives to the IndieK Desktop App."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.139.0",
-    "ik",
-    "networkx>=3.6.1",
-    "pillow>=12.3.0",
+    "indiek",
     "python-dotenv>=1.2.2",
-    "python-multipart>=0.0.20",
-    "starlette>=1.3.1",
     "uvicorn>=0.51.0",
 ]
 
 [tool.uv.sources]
-ik = { path = "../public_archive", editable = true }
+indiek = { path = "../public_archive", editable = true }
+
 [dependency-groups]
 dev = [
+    "httpx2>=2.13.1",
+    "pytest>=8.4.0",
     "ruff>=0.15.21",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100

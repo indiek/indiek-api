@@ -1,4 +1,6 @@
 *code-workspace
 .env*
 __pycache__
-.workspaces
+.venv/
+.ruff_cache/
+.pytest_cache/
