@@ -42,15 +42,15 @@ Dependency changes: `uv add <pkg>` / `uv add --dev <pkg>` / `uv remove <pkg>` (u
 
 ## 3. Daily commands
 
-| Command | What it does |
-| --- | --- |
-| `uv run python -m indiek_api` | Run the server on http://127.0.0.1:8000 (interactive docs at `/docs`, schema at `/openapi.json`) |
-| `uv run pytest` | Full test suite |
-| `uv run pytest tests/test_api.py` | One file |
-| `uv run pytest tests/test_api.py::test_name` | One test |
-| `uv run pytest -k supersede -x` | Tests matching a keyword, stop at first failure |
-| `uv run ruff check .` | Lint (`--fix` to auto-fix) |
-| `uv run ruff format .` | Format (`--check` to only verify) |
+| Command                                      | What it does                                                                                     |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `uv run python -m indiek_api`                | Run the server on http://127.0.0.1:8000 (interactive docs at `/docs`, schema at `/openapi.json`) |
+| `uv run pytest`                              | Full test suite                                                                                  |
+| `uv run pytest tests/test_api.py`            | One file                                                                                         |
+| `uv run pytest tests/test_api.py::test_name` | One test                                                                                         |
+| `uv run pytest -k supersede -x`              | Tests matching a keyword, stop at first failure                                                  |
+| `uv run ruff check .`                        | Lint (`--fix` to auto-fix)                                                                       |
+| `uv run ruff format .`                       | Format (`--check` to only verify)                                                                |
 
 Before committing: `uv run ruff check . && uv run ruff format --check . && uv run pytest`.
 
