@@ -2,6 +2,11 @@
 
 A workspace is only a pointer to a folder (typically a git repo): archives are
 read and written in place, never copied. Removing a workspace never touches files.
+
+A folder is an archive when it holds ``MANIFEST.json``, ``events/`` or
+``meta/events/``. Registering a folder that is not an archive opens its only
+archive subfolder (e.g. a repo with the archive in ``kg/``); it never writes files
+unless a new archive is explicitly requested in an empty or missing folder.
 """
 
 from __future__ import annotations
@@ -15,10 +20,79 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from indiek import Archive, Author
+
 from indiek_api.archive_service import ArchiveService
-from indiek_api.errors import WorkspaceNotFoundError
+from indiek_api.errors import (
+    AmbiguousArchiveError,
+    ArchiveNotFoundError,
+    FolderNotEmptyError,
+    NotAnArchiveError,
+    WorkspaceNotFoundError,
+    library_errors,
+)
 
 logger = logging.getLogger(__name__)
+
+_ARCHIVE_MARKERS = ("MANIFEST.json", "events", "meta/events")
+
+
+def is_archive(folder: Path) -> bool:
+    return any((folder / marker).exists() for marker in _ARCHIVE_MARKERS)
+
+
+def _existing_folder(path: str | Path) -> Path:
+    folder = Path(path).expanduser().resolve()
+    if not folder.is_dir():
+        raise ArchiveNotFoundError(f"Archive folder does not exist: {folder}")
+    return folder
+
+
+def _visible_entries(folder: Path) -> list[Path]:
+    """Entries of ``folder`` except hidden ones (``.git``, ``.DS_Store``…)."""
+    return sorted(entry for entry in folder.iterdir() if not entry.name.startswith("."))
+
+
+def locate_archive(path: str | Path) -> Path:
+    """The archive at ``path``, or the single archive among its direct subfolders."""
+    folder = _existing_folder(path)
+    if is_archive(folder):
+        return folder
+    try:
+        candidates = [e for e in _visible_entries(folder) if e.is_dir() and is_archive(e)]
+    except OSError as exc:
+        raise NotAnArchiveError(f"Cannot list {folder}: {exc}") from exc
+    if len(candidates) == 1:
+        return candidates[0]
+    if candidates:
+        raise AmbiguousArchiveError(
+            f"{folder} holds several IndieK archives; choose one.",
+            [str(candidate) for candidate in candidates],
+        )
+    raise NotAnArchiveError(
+        f"No IndieK archive in {folder} or its subfolders (no MANIFEST.json or events/)."
+    )
+
+
+def create_archive(path: str | Path, author: Author | None) -> Path:
+    """Initialise an archive (MANIFEST.json, SPEC.md) in an empty folder.
+
+    A missing folder is created when its parent exists (like ``git init <dir>``);
+    a missing parent is refused so that a typo does not create a folder tree.
+    """
+    folder = Path(path).expanduser().resolve()
+    if not folder.exists():
+        if not folder.parent.is_dir():
+            raise ArchiveNotFoundError(f"Parent folder does not exist: {folder.parent}")
+        folder.mkdir()
+    folder = _existing_folder(folder)
+    if _visible_entries(folder):
+        raise FolderNotEmptyError(
+            f"A new archive needs an empty folder (hidden entries such as .git aside): {folder}"
+        )
+    with library_errors():
+        Archive.open(folder, author=author).write_manifest()
+    return folder
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,11 +148,19 @@ class WorkspaceRegistry:
             except KeyError:
                 raise WorkspaceNotFoundError(f"Unknown workspace '{workspace_id}'") from None
 
-    def register(self, path: str | Path) -> tuple[WorkspaceRecord, bool]:
-        """Register a folder after verifying it; return ``(record, created)``."""
-        service = ArchiveService(Path(path))  # raises ArchiveNotFoundError
-        resolved = str(service.root)
+    def register(
+        self, path: str | Path, *, create: bool = False, author: Author | None = None
+    ) -> tuple[WorkspaceRecord, bool]:
+        """Register an archive folder after verifying it; return ``(record, created)``.
+
+        With ``create``, first initialise a new archive in the empty folder ``path``
+        (``author`` is listed in its MANIFEST.json); otherwise locate the archive at
+        or directly under ``path``.
+        """
         with self._lock:
+            root = create_archive(path, author) if create else locate_archive(path)
+            service = ArchiveService(root)
+            resolved = str(service.root)
             for record in self._records.values():
                 if record.path == resolved:
                     return record, False

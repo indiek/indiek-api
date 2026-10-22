@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,107 @@ def test_register_tampered_archive_is_refused(
     response = client.post("/api/workspaces", json={"path": str(sample_archive.root)})
     _assert_error(response, 409, "archive_integrity")
     assert client.get("/api/workspaces").json() == []
+
+
+def test_register_folder_without_an_archive_is_refused(client: TestClient, tmp_path: Path) -> None:
+    folder = tmp_path / "notes"
+    folder.mkdir()
+    (folder / "notes.txt").write_text("hello", encoding="utf-8")
+    response = client.post("/api/workspaces", json={"path": str(folder)})
+    _assert_error(response, 422, "not_an_archive")
+    assert sorted(p.name for p in folder.iterdir()) == ["notes.txt"]
+    assert client.get("/api/workspaces").json() == []
+
+
+def test_register_repo_opens_its_single_archive_subfolder(
+    client: TestClient, sample_archive: SampleArchive, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("# repo", encoding="utf-8")
+    archive = Path(shutil.move(sample_archive.root, repo / "kg"))
+    response = client.post("/api/workspaces", json={"path": str(repo)})
+    assert response.status_code == 201, response.text
+    assert response.json()["path"] == str(archive.resolve())
+    assert response.json()["name"] == "kg"
+
+
+def test_register_repo_with_several_archives_lists_the_candidates(
+    client: TestClient, sample_archive: SampleArchive, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    first = Path(shutil.copytree(sample_archive.root, repo / "a"))
+    second = Path(shutil.copytree(sample_archive.root, repo / "b"))
+    response = client.post("/api/workspaces", json={"path": str(repo)})
+    _assert_error(response, 409, "ambiguous_archive")
+    assert response.json()["candidates"] == [str(first.resolve()), str(second.resolve())]
+    assert client.get("/api/workspaces").json() == []
+
+
+@pytest.mark.parametrize("hidden", [[], [".git"], [".git", ".DS_Store"]])
+def test_create_archive_in_an_empty_folder(
+    client: TestClient, author: Author, tmp_path: Path, hidden: list[str]
+) -> None:
+    folder = tmp_path / "fresh"
+    folder.mkdir()
+    for name in hidden:
+        (folder / name).mkdir()
+    response = client.post("/api/workspaces", json={"path": str(folder), "create": True})
+    assert response.status_code == 201, response.text
+    assert (folder / "MANIFEST.json").is_file()
+    assert author.public_key_hex in (folder / "MANIFEST.json").read_text(encoding="utf-8")
+
+    workspace_id = response.json()["workspace_id"]
+    graph = client.get(f"/api/workspaces/{workspace_id}/graph").json()
+    assert (graph["nodes"], graph["edges"], graph["tags"]) == ([], [], [])
+    created = client.post(f"/api/workspaces/{workspace_id}/nodes", json={"content": "first"})
+    assert (created.status_code, created.json()["alias"]) == (201, "e1")
+
+
+def test_create_archive_makes_a_missing_folder(client: TestClient, tmp_path: Path) -> None:
+    folder = tmp_path / "blue"
+    response = client.post("/api/workspaces", json={"path": str(folder), "create": True})
+    assert response.status_code == 201, response.text
+    assert response.json()["path"] == str(folder.resolve())
+    assert (folder / "MANIFEST.json").is_file()
+
+
+def test_create_archive_needs_an_existing_parent(client: TestClient, tmp_path: Path) -> None:
+    folder = tmp_path / "typo" / "blue"
+    response = client.post("/api/workspaces", json={"path": str(folder), "create": True})
+    _assert_error(response, 404, "archive_not_found")
+    assert "Parent folder does not exist" in response.json()["detail"]
+    assert not (tmp_path / "typo").exists()
+
+
+def test_create_archive_refuses_a_non_empty_folder(client: TestClient, tmp_path: Path) -> None:
+    folder = tmp_path / "busy"
+    folder.mkdir()
+    (folder / "notes.txt").write_text("hello", encoding="utf-8")
+    response = client.post("/api/workspaces", json={"path": str(folder), "create": True})
+    _assert_error(response, 409, "folder_not_empty")
+    assert sorted(p.name for p in folder.iterdir()) == ["notes.txt"]
+
+
+def test_create_archive_on_an_existing_archive_is_refused(
+    client: TestClient, sample_archive: SampleArchive
+) -> None:
+    response = client.post(
+        "/api/workspaces", json={"path": str(sample_archive.root), "create": True}
+    )
+    _assert_error(response, 409, "folder_not_empty")
+
+
+def test_create_archive_without_an_author_key(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("IK_AUTHOR_PRIVATE_KEY")
+    folder = tmp_path / "fresh"
+    folder.mkdir()
+    response = client.post("/api/workspaces", json={"path": str(folder), "create": True})
+    assert response.status_code == 201, response.text
+    assert (folder / "MANIFEST.json").is_file()
 
 
 def test_workspaces_survive_a_restart(workspace: Workspace, settings: Settings) -> None:

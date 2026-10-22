@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -24,6 +25,10 @@ class IndieKAPIError(Exception):
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.detail = detail
+
+    def extra(self) -> dict[str, Any]:
+        """Additional machine-readable fields of the error response."""
+        return {}
 
 
 class ArchiveNotFoundError(IndieKAPIError):
@@ -54,6 +59,31 @@ class ArchiveIntegrityError(IndieKAPIError):
 
 class WorkspaceConflictError(IndieKAPIError):
     status_code, code = 409, "workspace_conflict"
+
+
+class FolderNotEmptyError(IndieKAPIError):
+    """A new archive can only be created in an empty folder (hidden entries aside)."""
+
+    status_code, code = 409, "folder_not_empty"
+
+
+class AmbiguousArchiveError(IndieKAPIError):
+    """The folder is not an archive but holds several archive subfolders."""
+
+    status_code, code = 409, "ambiguous_archive"
+
+    def __init__(self, detail: str, candidates: list[str]) -> None:
+        super().__init__(detail)
+        self.candidates = candidates
+
+    def extra(self) -> dict[str, Any]:
+        return {"candidates": self.candidates}
+
+
+class NotAnArchiveError(IndieKAPIError):
+    """Neither the folder nor any of its direct subfolders is an IndieK archive."""
+
+    status_code, code = 422, "not_an_archive"
 
 
 class ArchiveRuleError(IndieKAPIError):
@@ -96,5 +126,6 @@ def install_handlers(app: FastAPI) -> None:
     @app.exception_handler(IndieKAPIError)
     async def _handle(_: Request, exc: IndieKAPIError) -> JSONResponse:
         return JSONResponse(
-            status_code=exc.status_code, content={"detail": exc.detail, "code": exc.code}
+            status_code=exc.status_code,
+            content={"detail": exc.detail, "code": exc.code, **exc.extra()},
         )

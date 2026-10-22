@@ -20,7 +20,14 @@ class _FromView(BaseModel):
 
 
 class WorkspaceCreate(BaseModel):
-    path: str = Field(min_length=1, description="Absolute path of a local archive folder.")
+    path: str = Field(
+        min_length=1,
+        description="Absolute path of an archive folder, or of a folder (e.g. a git repo) "
+        "whose single archive is a direct subfolder.",
+    )
+    create: bool = Field(
+        default=False, description="Initialise a new archive in the empty folder `path`."
+    )
 
 
 class NodeWrite(BaseModel):

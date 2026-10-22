@@ -98,7 +98,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @api.post("", response_model=WorkspaceOut, status_code=201)
     def register_workspace(payload: WorkspaceCreate, response: Response) -> WorkspaceRecord:
-        record, created = registry.register(payload.path)
+        author = settings.author_or_none() if payload.create else None
+        record, created = registry.register(payload.path, create=payload.create, author=author)
         if not created:
             response.status_code = 200
         return record

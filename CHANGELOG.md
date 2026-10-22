@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.12.0 — 2026-10-21
+
+### Changed
+- `POST /api/workspaces` only registers IndieK archives (a folder holding
+  `MANIFEST.json`, `events/` or `meta/events/`). A folder that is not an archive but
+  has exactly one archive subfolder (e.g. a git repo with the archive in `kg/`)
+  registers that subfolder; with several it answers `409 ambiguous_archive` plus a
+  `candidates` list; with none `422 not_an_archive`. Nothing is written in either case
+  (previously any existing folder was accepted as an empty archive).
+
+### Added
+- `POST /api/workspaces {path, create: true}` initialises a new archive (MANIFEST.json,
+  SPEC.md via the SDK) in a folder that is empty apart from hidden entries such as
+  `.git`; a missing folder is created when its parent exists (`404` "Parent folder
+  does not exist" otherwise, nothing created), listing the configured author if `IK_AUTHOR_PRIVATE_KEY` is set;
+  `409 folder_not_empty` otherwise.
+- Error responses may carry extra fields (`IndieKAPIError.extra()`).
+
 ## 0.11.0 — 2026-10-21
 
 ### Changed

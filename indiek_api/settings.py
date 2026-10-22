@@ -50,6 +50,10 @@ class Settings:
         if self.env_file is not None and self.env_file.is_file():
             load_dotenv(self.env_file, override=False)
 
+    def author_or_none(self) -> Author | None:
+        """The configured author, or ``None`` when ``IK_AUTHOR_PRIVATE_KEY`` is unset."""
+        return self.author() if os.getenv("IK_AUTHOR_PRIVATE_KEY", "").strip() else None
+
     def author(self) -> Author:
         """Return the author that signs writes, read fresh from ``IK_AUTHOR_PRIVATE_KEY``."""
         seed = os.getenv("IK_AUTHOR_PRIVATE_KEY", "").strip()
