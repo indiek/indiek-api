@@ -7,21 +7,14 @@ from __future__ import annotations
 
 import logging
 from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from indiek import create_edge_tag, create_node_tag, set_tag, supersede_edge
-from indiek.create_edge import create_base_edge
-from indiek.create_node import (
-    create_local_file_node,
-    create_node_from_content,
-    create_uri_node,
-)
-from indiek.models import MediaType
-from indiek.supersede_node import create_supersede_event
+from indiek import MediaType, ResourceType
 
 from indiek_api import __version__
 from indiek_api.archive_service import (
@@ -57,12 +50,12 @@ from indiek_api.workspaces import WorkspaceRecord, WorkspaceRegistry
 
 
 def _created(
-    service: ArchiveService, new_ids: list[str], kind: Literal["node", "edge", "tag"]
+    service: ArchiveService, item_id: UUID, kind: Literal["node", "edge", "tag"]
 ) -> Created:
     projection = service.projection()
     pool = {"node": projection.nodes, "edge": projection.edges, "tag": projection.tags}[kind]
-    item_id = next(item_id for item_id in new_ids if item_id in pool)
-    return Created(id=item_id, alias=pool[item_id].alias)
+    item = pool[str(item_id)]
+    return Created(id=item.id, alias=item.alias)
 
 
 def _find_item(projection: Projection, ref: str) -> NodeView | EdgeView:
@@ -146,110 +139,79 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @api.post("/{workspace_id}/nodes", response_model=Created, status_code=201)
     def create_node(workspace_id: str, payload: NodeCreate) -> Created:
         service = registry.service(workspace_id)
-        author = settings.author_credentials()
-        keys = (author.public_key, author.signing_key)
+        author = settings.author()
         match payload:
             case ManagedNodeCreate():
-                new_ids = service.create(
-                    lambda index: create_node_from_content(
-                        index, payload.content, MediaType(payload.media_type), *keys, payload.title
-                    )
+                node_id = service.write(
+                    author,
+                    lambda ik: ik.create_node(
+                        payload.content,
+                        media_type=MediaType(payload.media_type),
+                        title=payload.title,
+                    ),
                 )
             case UriNodeCreate():
-                new_ids = service.create(
-                    lambda index: create_uri_node(
-                        index, str(payload.uri), payload.title, payload.media_type, *keys
-                    )
+                node_id = service.write(
+                    author,
+                    lambda ik: ik.create_node(
+                        resource_type=ResourceType.URI,
+                        uri=str(payload.uri),
+                        title=payload.title,
+                        media_type=payload.media_type,
+                    ),
                 )
             case LocalFileNodeCreate():
-                new_ids = service.create(
-                    lambda index: create_local_file_node(index, payload.path, payload.title, *keys)
+                node_id = service.write(
+                    author,
+                    lambda ik: ik.create_node(
+                        resource_type=ResourceType.LOCAL_FILE,
+                        path=payload.path,
+                        title=payload.title,
+                    ),
                 )
-        return _created(service, new_ids, "node")
+        return _created(service, node_id, "node")
 
     @api.put("/{workspace_id}/nodes/{node_id}", response_model=Created)
     def supersede_node(workspace_id: str, node_id: str, payload: NodeWrite) -> Created:
         service = registry.service(workspace_id)
-        author = settings.author_credentials()
         revised_id = service.write(
-            lambda index: create_supersede_event(
-                archive_idx=index,
-                node_id=node_id,
-                content=payload.content,
-                title=payload.title,
-                media_type=MediaType.TEXT_MARKDOWN,
-                public_key=author.public_key,
-                signing_key=author.signing_key,
-            )
+            settings.author(),
+            lambda ik: ik.supersede_node(node_id, payload.content, title=payload.title),
         )
-        node = service.projection().nodes[str(revised_id)]
-        return Created(id=node.id, alias=node.alias)
+        return _created(service, revised_id, "node")
 
     @api.post("/{workspace_id}/edges", response_model=Created, status_code=201)
     def create_edge(workspace_id: str, payload: EdgeCreate) -> Created:
         service = registry.service(workspace_id)
-        author = settings.author_credentials()
-        new_ids = service.create(
-            lambda index: create_base_edge(
-                payload.content,
-                payload.source,
-                payload.target,
-                author.public_key,
-                author.signing_key,
-                index,
-            )
+        edge_id = service.write(
+            settings.author(),
+            lambda ik: ik.create_edge(payload.source, payload.target, payload.content),
         )
-        return _created(service, new_ids, "edge")
+        return _created(service, edge_id, "edge")
 
     @api.put("/{workspace_id}/edges/{edge_id}", response_model=Created)
-    def supersede_edge_route(workspace_id: str, edge_id: str, payload: EdgeWrite) -> Created:
+    def supersede_edge(workspace_id: str, edge_id: str, payload: EdgeWrite) -> Created:
         service = registry.service(workspace_id)
-        author = settings.author_credentials()
         revised_id = service.write(
-            lambda index: supersede_edge.run(
-                edge_id=edge_id,
-                content=payload.content,
-                curr_public_key=author.public_key,
-                curr_signing_key=author.signing_key,
-                archive_idx=index,
-            )
+            settings.author(), lambda ik: ik.supersede_edge(edge_id, payload.content)
         )
-        edge = service.projection().edges[str(revised_id)]
-        return Created(id=edge.id, alias=edge.alias)
+        return _created(service, revised_id, "edge")
 
     @api.post("/{workspace_id}/tags", response_model=Created, status_code=201)
     def create_tag(workspace_id: str, payload: TagCreate) -> Created:
         service = registry.service(workspace_id)
-        author = settings.author_credentials()
-        fields = {
-            "tag_name": payload.name,
-            "tag_description": payload.description,
-            "curr_public_key": author.public_key,
-            "curr_signing_key": author.signing_key,
-        }
-        if payload.kind == "node":
-            new_ids = service.create(lambda index: create_node_tag.run(**fields, archive_idx=index))
-        else:
-            new_ids = service.create(
-                lambda index: create_edge_tag.run(**fields, archive_index=index)
-            )
-        return _created(service, new_ids, "tag")
+        tag_id = service.write(
+            settings.author(),
+            lambda ik: ik.create_tag(payload.name, payload.description, kind=payload.kind),
+        )
+        return _created(service, tag_id, "tag")
 
     @api.post(
         "/{workspace_id}/tags/{tag_id}/assignments", response_model=TargetTags, status_code=201
     )
     def assign_tag(workspace_id: str, tag_id: str, payload: TagAssignment) -> TargetTags:
         service = registry.service(workspace_id)
-        author = settings.author_credentials()
-        service.write(
-            lambda index: set_tag.run(
-                edge_source=tag_id,
-                underlying_target=payload.target,
-                curr_public_key=author.public_key,
-                curr_signing_key=author.signing_key,
-                archive_idx=index,
-            )
-        )
+        service.write(settings.author(), lambda ik: ik.set_tag(tag_id, payload.target))
         target = _find_item(service.projection(), payload.target)
         return TargetTags(target=target.id, tags=list(target.tags))
 

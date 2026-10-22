@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.11.0 — 2026-10-21
+
+### Changed
+- Ported to the `indiek` SDK facade (`indiek.Archive`, `indiek.Author`): the API no
+  longer imports the legacy `indiek.blob` / `create_*` / `set_tag` modules, which
+  were removed upstream. Archives must use format `3.0`; any other version answers
+  `409 archive_integrity`.
+- Archives are opened at the SDK's default `incremental` verification level, backed
+  by the per-machine verification cache (`IK_CACHE_DIR`, outside the archive).
+- SDK errors are mapped by exception type instead of message substrings:
+  `AuthorshipError` → 403 `forbidden`, `UnknownItemError` → 404 `item_not_found`,
+  `IntegrityError` → 409 `archive_integrity`, other rule/validation errors → 422
+  `archive_rule`.
+- `PUT …/edges/{id}` with the ID of a node (and vice versa) now answers 404
+  `item_not_found` (was 422): the ID does not name an item of that kind.
+- `ArchiveService.write(author, operation)` passes an `indiek.Archive` to
+  `operation`; `ArchiveService.create()` and `.index()` are gone (SDK writes return
+  the new item's UUID). `Settings.author()` replaces `Settings.author_credentials()`.
+
+### Tests
+- Demo fixture rebuilt in format 3.0 by `tests/fixtures/build_demo_archive.sh`
+  (drives the `ik` CLI from `tests/fixtures/demo_sources/`, throwaway key).
+- Tests isolate the SDK verification cache per test (`IK_CACHE_DIR` under `tmp_path`).
+- New `tests/test_errors.py` for the error mapping.
+
 ## 0.10.0 — 2026-10-12
 
 ### Changed (breaking)

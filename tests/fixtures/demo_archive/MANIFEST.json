@@ -1,398 +1,1171 @@
 {
   "format": "IndieK Public Archive",
-  "format_version": "2.0",
-  "description": "This MANIFEST.json documents the layout and schemas of an IndieK archive.  It is intended to allow any consumer to parse the archive independently of the original software, now or in the future.",
+  "format_version": "3.0",
+  "description": "This MANIFEST.json documents the layout and schemas of an IndieK archive.  It is intended to allow any consumer to parse the archive independently of the original software, now or in the future.  SPEC.md, next to it, is the normative specification.",
+  "spec": {
+    "normative": "SPEC.md",
+    "test_vectors": "test_vectors.json"
+  },
   "authors": [
     {
-      "public_key": "fd3136aa6d7b20d7555b2a9e8b813dfa9de83d1dacbab49778a9174346130296",
+      "public_key": "7a9acf5c9e193dc8ed3c0d1761910d606136c9dea4ec0fea5ca9504adaf11356",
       "algorithm": "Ed25519"
     }
   ],
+  "authors_note": "Informative: the key of whoever ran 'ik manifest'.  Every event names its own author in header.author; validity never depends on this list.",
+  "algorithms": {
+    "hash": [
+      "sha256"
+    ],
+    "signature": [
+      "ed25519"
+    ]
+  },
+  "archive_layout": {
+    "description": "Entries of the archive root.  Only events/ is needed for a non-empty archive (plus blobs/ as soon as an event references a blob); every other entry is optional.  The event logs and the blobs are the only source of truth: indexes, aliases and caches are rebuildable views.",
+    "entries": {
+      "MANIFEST.json": "This file (informative, written by 'ik manifest').",
+      "SPEC.md": "Normative, human-readable format specification (informative copy).",
+      "test_vectors.json": "Test vectors of the format (informative copy).",
+      "events/": "Base event log: the knowledge graph (nodes and edges).",
+      "meta/events/": "Meta event log: tags and their assignments.",
+      "seals/": "Seal log: signed checkpoints of the whole archive.",
+      "blobs/": "Content-addressed blob store (blobs/sha256/...)."
+    },
+    "not_part_of_the_archive": "The verification cache lives in the reader's user cache directory, never in the archive; a .ik-cache/ folder, or any other entry not listed above, is ignored."
+  },
   "blob_store": {
     "description": "Content-addressed blob store.  Every blob is immutable once written.",
     "root": "<archive_root>/blobs/sha256/",
     "path_pattern": "<root>/<hex[0:2]>/<hex[2:4]>/<sha256_hex>",
     "example": "blobs/sha256/ab/cd/abcd1234...ef",
     "notes": [
-      "The filename is the full 64-character SHA-256 hex digest of the blob bytes.",
+      "The filename is the full 64-character lowercase SHA-256 hex digest of the blob bytes.",
       "The two-level sharding (first 2 + next 2 hex chars) keeps directories small.",
-      "To retrieve a blob referenced by 'sha256:XXXX' in an event, strip the 'sha256:' prefix and navigate to blobs/sha256/<XXXX[0:2]>/<XXXX[2:4]>/<XXXX>."
+      "To retrieve a blob referenced by 'sha256:XXXX' in an event, strip the 'sha256:' prefix and open blobs/sha256/<XXXX[0:2]>/<XXXX[2:4]>/<XXXX>.",
+      "A referenced blob that is missing, or whose bytes hash to something else, makes the archive invalid."
     ]
   },
   "event_log": {
-    "description": "Append-only event log stored as date-sharded NDJSON files.  Reading ALL files in chronological order (by filesystem path) produces the complete, ordered event sequence.",
+    "description": "Two append-only, hash-chained event logs stored as date-sharded NDJSON files: the base log (the knowledge graph) and the meta log (tags).",
     "base_event_log_root": "<archive_root>/events/",
     "meta_event_log_root": "<archive_root>/meta/events/",
-    "path_pattern": "<log_root>/YYYY/MM/DD/events.ndjson",
-    "file_format": "NDJSON (one JSON object per line, UTF-8 encoded)",
-    "ordering": "Sort all ndjson file paths lexicographically before reading.  Within a file, events are in append order (top = oldest).",
-    "chain_integrity": "Each event's header.prev_hash is the SHA-256 of the *entire* preceding event JSON (keys sorted, compact).  The genesis event has prev_hash=null.  The hash of the final event is the canonical unique identifier for the archive at that point in time: two archives are identical iff their last event hashes match.",
+    "path_pattern": "<log_root>/YYYY/MM/DD/events.ndjson (UTC date of the event)",
+    "file_format": "NDJSON: one JSON object per line, UTF-8, each line terminated by LF",
+    "ordering": "Sort every file whose name ends in 'ndjson' under the log root by path, lexicographically, then read each file top to bottom.  The result is the event sequence; event numbers start at 1.",
+    "chain_integrity": "Each event's header.prev_hash is the '<hash_alg>:<hex>' digest, under that event's header.hash_alg, of the canonical bytes of the *entire* preceding event (signature included).  The first event of a log has prev_hash=null, and no other event may.  The hash of the last event is the head of the log.",
+    "canonical_bytes": "RFC 8785 (JSON Canonicalization Scheme) restricted to ASCII object keys and integers in [-(2^53-1), 2^53-1] (9007199254740991); no other numbers are allowed.  Inside that subset it equals Python's json.dumps(obj, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False) encoded as UTF-8: no whitespace, keys sorted, non-ASCII characters kept as raw UTF-8.  Hashes and signatures are computed over the canonical bytes of the parsed line, never over the bytes on disk.  See SPEC.md and test_vectors.json.",
+    "strict_parsing": "A log line is invalid if it is not UTF-8, is not one JSON object, repeats a key in any object, contains a non-integer number (fraction, exponent, NaN, Infinity) or an integer outside [-(2^53-1), 2^53-1], or holds a string with a lone surrogate.",
     "signature_algorithm": {
       "signing_curve": "Ed25519",
-      "library_reference": "PyNaCl / libsodium",
-      "what_is_signed": "SHA-256 digest of the event body serialised as compact JSON with keys sorted alphabetically (json.dumps(body, sort_keys=True)).",
-      "signature_encoding": "lowercase hex string"
-    }
+      "specification": "RFC 8032 (PureEd25519)",
+      "what_is_signed": "The canonical bytes of the whole event without its signature field ({header, body}), signed directly (no pre-hash).  Signing the header binds each signature to its chain position, time and author.",
+      "signature_encoding": "'ed25519:' followed by 128 lowercase hex characters",
+      "public_key": "header.author: 64 lowercase hex characters (32 bytes)"
+    },
+    "meta_anchors": "Verify the base log first, keeping the hash of every base event.  Then every meta event's (base_seq, base_head) must name a base event that exists with exactly that hash (base_seq 0 with base_head null for an empty view), and base_seq must not decrease along the meta log.  Meta commits to base; base never commits to meta.",
+    "algorithm_agility": "Every digest is written '<hash_alg>:<lowercase hex>' and every signature '<sig_alg>:<lowercase hex>'.  Each event names its algorithms in header.hash_alg and header.sig_alg; its prev_hash and signature prefixes MUST equal them.  Unknown algorithms or mismatched prefixes make the archive invalid.  Supported: hash sha256, signature ed25519.  Blob hashes are always 'sha256:'.  Transcription events let later authors re-attest a log under newer algorithms."
+  },
+  "seal_log": {
+    "description": "Append-only log of signed checkpoints ('seals'), one JSON object per line.  The hash of the latest seal is the one string that commits to the whole archive: publish it, and check it with 'ik verify --expect'.",
+    "path": "<archive_root>/seals/seals.ndjson",
+    "file_format": "NDJSON, UTF-8, parsed with the same strict rules as event logs",
+    "signing": "sig = 'ed25519:<hex>' Ed25519 signature by 'key' over the canonical bytes of the seal without its 'sig' field.  Seal hash = '<hash_alg>:<hex>' digest of the canonical bytes of the whole seal (sig included).",
+    "chain": "seq is the 1-based position of the seal; prev_seal_hash is the hash of the previous seal, null for the first seal and only there.",
+    "tips": "base and meta are {head, count}: head MUST be the hash of event number count of that verified log (null iff count is 0).  Counts MUST NOT decrease along the seal log.",
+    "blob_root": "RFC 6962 Merkle Tree Hash, with SHA-256, over the ascending-sorted list of distinct blob digests referenced (blob_hash) by the first base.count base events and the first meta.count meta events.  Leaf = SHA-256(0x00 || 32 raw digest bytes); inner node = SHA-256(0x01 || left || right), pairing level by level and promoting an odd last node unchanged; no blobs = SHA-256 of the empty string.  Written 'sha256:<hex>'.  Every seal is checked.",
+    "unreferenced_blobs": "Files under blobs/sha256/ that no event references (an interrupted write, or a file added by hand) are not covered by any seal.  Readers SHOULD warn about them; writers MUST NOT seal while any exist.  They are safe to delete.",
+    "warnings": "A seal of an empty archive, or a seal committing to the same tips and blob_root as the previous seal, is valid but SHOULD be reported."
+  },
+  "verification": {
+    "description": "Reader behaviour of the reference implementation (informative).  The validity of an archive is defined by SPEC.md alone.",
+    "levels": {
+      "none": "Parse only (debugging, recovery); the archive is opened read-only.",
+      "incremental": "Recompute every hash link, anchor, transcription and seal; skip only the signature checks and blob re-hashing that the reader's own cache, or a seal hash the reader supplied, vouches for.",
+      "full": "Check everything, then refresh the reader's cache."
+    },
+    "trust": "Checks may be skipped only on the basis of (a) the reader's own cache or (b) a seal hash obtained by the reader through a separate, trusted route.  A seal found in the archive is always checked, never trusted.",
+    "cache": "The cache is local to the reader, non-authoritative and regenerable.  It lives outside the archive, in the user's cache directory, so that nothing shipped with an archive can make a reader skip a check."
+  },
+  "log_lines": {
+    "events/": "#/schemas/EventModel",
+    "meta/events/": "#/schemas/MetaEventModel",
+    "seals/": "#/schemas/SealModel"
   },
   "schemas": {
+    "Edge": {
+      "description": "Create a directed graph edge.",
+      "properties": {
+        "event_type": {
+          "const": "create_edge",
+          "default": "create_edge",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "resource_type": {
+          "$ref": "#/schemas/ResourceType",
+          "default": "managed"
+        },
+        "media_type": {
+          "anyOf": [
+            {
+              "$ref": "#/schemas/MediaType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "blob_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blob Hash"
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uri"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "file_size": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File Size"
+        },
+        "file_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File Hash"
+        },
+        "last_verified": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Verified"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "body_type": {
+          "const": "edge",
+          "default": "edge",
+          "title": "Body Type",
+          "type": "string"
+        },
+        "edge_id": {
+          "format": "uuid",
+          "title": "Edge Id",
+          "type": "string"
+        },
+        "source_node": {
+          "format": "uuid",
+          "title": "Source Node",
+          "type": "string"
+        },
+        "target_node": {
+          "format": "uuid",
+          "title": "Target Node",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_node",
+        "target_node"
+      ],
+      "title": "Edge",
+      "type": "object"
+    },
     "EventHeader": {
-      "description": "Header present in every event and meta-event.",
-      "fields": {
+      "description": "Signed event-chain metadata.",
+      "properties": {
         "version": {
-          "type": "string",
-          "description": "Format version string (for example '2.0'). Consumers MUST reject events whose version they do not recognise."
+          "default": "3.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "hash_alg": {
+          "default": "sha256",
+          "title": "Hash Alg",
+          "type": "string"
+        },
+        "sig_alg": {
+          "default": "ed25519",
+          "title": "Sig Alg",
+          "type": "string"
         },
         "prev_hash": {
-          "type": "string | null",
-          "description": "SHA-256 hex digest (64 lower-case hex characters) of the *entire* preceding event JSON object, serialised with keys sorted alphabetically and no extra whitespace.  null for the genesis event."
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9-]+:[0-9a-f]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Prev Hash"
         },
         "timestamp": {
-          "type": "string",
-          "format": "ISO-8601 datetime with timezone",
-          "description": "Wall-clock time at which the event was written by the author."
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
         },
         "author": {
-          "type": "string",
-          "description": "64-character hex-encoded Ed25519 public key of the event author.  This key MUST appear in MANIFEST.json > authors."
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Author",
+          "type": "string"
         }
-      }
-    },
-    "EventBody": {
-      "description": "Body of a base-network event.  Exactly one of the body types below is present, discriminated by the body_type field.",
-      "body_types": {
-        "node": {
-          "discriminator": "body_type = 'node'",
-          "fields": {
-            "body_type": {
-              "const": "node"
-            },
-            "event_type": {
-              "const": "create_node"
-            },
-            "node_id": {
-              "type": "UUID v7 string",
-              "description": "Unique identifier for the node."
-            },
-            "title": {
-              "type": "string | null",
-              "description": "Optional human-readable title."
-            },
-            "media_type": {
-              "type": "string | null",
-              "enum": [
-                "text/plain; charset=utf-8",
-                "text/markdown; charset=utf-8",
-                "image/tiff",
-                "image/png",
-                "image/jpeg",
-                "application/pdf; profile=pdfa"
-              ],
-              "description": "Required for managed and local_file resources; optional URI hint."
-            },
-            "resource_type": {
-              "type": "string",
-              "enum": [
-                "managed",
-                "uri",
-                "local_file"
-              ],
-              "default": "managed",
-              "description": "Missing in format 1.0 events implies managed."
-            },
-            "blob_hash": {
-              "type": "string | null",
-              "pattern": "^sha256:[0-9a-f]{64}$",
-              "description": "Content-address of the managed blob. Present only when resource_type is managed."
-            },
-            "uri": {
-              "type": "string | null",
-              "description": "Required external URI when resource_type is uri."
-            },
-            "path": {
-              "type": "string | null",
-              "description": "Required local path when resource_type is local_file."
-            },
-            "file_size": {
-              "type": "integer | null",
-              "minimum": 0,
-              "description": "Verified byte length for local_file."
-            },
-            "file_hash": {
-              "type": "string | null",
-              "pattern": "^sha256:[0-9a-f]{64}$",
-              "description": "SHA-256 fingerprint for local_file."
-            },
-            "last_verified": {
-              "type": "string | null",
-              "format": "ISO-8601 datetime",
-              "description": "Time local_file metadata was last verified."
-            }
-          },
-          "resource_rules": {
-            "managed": "requires blob_hash and media_type; excludes uri/local-file fields",
-            "uri": "requires uri; media_type is an optional hint; excludes blob_hash/local-file fields",
-            "local_file": "requires path, file_size, file_hash, last_verified, and media_type; excludes uri/blob_hash"
-          }
-        },
-        "edge": {
-          "discriminator": "body_type = 'edge'",
-          "fields": {
-            "body_type": {
-              "const": "edge"
-            },
-            "event_type": {
-              "const": "create_edge"
-            },
-            "edge_id": {
-              "type": "UUID v7 string"
-            },
-            "source_node": {
-              "type": "UUID v7 string",
-              "description": "node_id of the edge's source node."
-            },
-            "target_node": {
-              "type": "UUID v7 string",
-              "description": "node_id of the edge's target node."
-            },
-            "title": {
-              "type": "string | null"
-            },
-            "resource_type": {
-              "$ref": "node.resource_type"
-            },
-            "media_type": {
-              "$ref": "node.media_type"
-            },
-            "blob_hash": {
-              "$ref": "node.blob_hash"
-            },
-            "uri": {
-              "$ref": "node.uri"
-            },
-            "path": {
-              "$ref": "node.path"
-            },
-            "file_size": {
-              "$ref": "node.file_size"
-            },
-            "file_hash": {
-              "$ref": "node.file_hash"
-            },
-            "last_verified": {
-              "$ref": "node.last_verified"
-            }
-          }
-        },
-        "supersede_node": {
-          "discriminator": "body_type = 'supersede_node'",
-          "fields": {
-            "body_type": {
-              "const": "supersede_node"
-            },
-            "event_type": {
-              "const": "supersede_node"
-            },
-            "node_id": {
-              "type": "UUID v7 string",
-              "description": "ID of an existing node to supersede."
-            },
-            "title": {
-              "type": "string | null"
-            },
-            "resource_type": {
-              "$ref": "node.resource_type"
-            },
-            "media_type": {
-              "$ref": "node.media_type"
-            },
-            "blob_hash": {
-              "$ref": "node.blob_hash"
-            },
-            "uri": {
-              "$ref": "node.uri"
-            },
-            "path": {
-              "$ref": "node.path"
-            },
-            "file_size": {
-              "$ref": "node.file_size"
-            },
-            "file_hash": {
-              "$ref": "node.file_hash"
-            },
-            "last_verified": {
-              "$ref": "node.last_verified"
-            }
-          }
-        },
-        "supersede_edge": {
-          "discriminator": "body_type = 'supersede_edge'",
-          "fields": {
-            "body_type": {
-              "const": "supersede_edge"
-            },
-            "event_type": {
-              "const": "supersede_edge"
-            },
-            "edge_id": {
-              "type": "UUID v7 string",
-              "description": "ID of an existing edge to supersede."
-            },
-            "source_node": {
-              "type": "UUID v7 string",
-              "description": "Must equal the existing edge source."
-            },
-            "target_node": {
-              "type": "UUID v7 string",
-              "description": "Must equal the existing edge target."
-            },
-            "title": {
-              "type": "string | null"
-            },
-            "resource_type": {
-              "$ref": "node.resource_type"
-            },
-            "media_type": {
-              "$ref": "node.media_type"
-            },
-            "blob_hash": {
-              "$ref": "node.blob_hash"
-            },
-            "uri": {
-              "$ref": "node.uri"
-            },
-            "path": {
-              "$ref": "node.path"
-            },
-            "file_size": {
-              "$ref": "node.file_size"
-            },
-            "file_hash": {
-              "$ref": "node.file_hash"
-            },
-            "last_verified": {
-              "$ref": "node.last_verified"
-            }
-          }
-        }
-      }
-    },
-    "MetaEventBody": {
-      "description": "Body of a meta-network event.  The meta-network encodes node/edge tagging as a graph of its own.  body_type discriminates the variant.",
-      "body_types": {
-        "tag": {
-          "discriminator": "body_type = 'tag'",
-          "event_types": [
-            "create_node_tag",
-            "create_edge_tag"
-          ],
-          "fields": {
-            "body_type": {
-              "const": "tag"
-            },
-            "event_type": {
-              "enum": [
-                "create_node_tag",
-                "create_edge_tag"
-              ]
-            },
-            "node_id": {
-              "type": "UUID v7 string"
-            },
-            "name": {
-              "type": "string"
-            },
-            "description": {
-              "type": "string"
-            }
-          }
-        },
-        "representation": {
-          "discriminator": "body_type = 'representation'",
-          "event_types": [
-            "create_node_representation",
-            "create_edge_representation"
-          ],
-          "description": "A shadow node in the meta-network that stands for a base-network node or edge, allowing tags to be attached via meta-edges.",
-          "fields": {
-            "body_type": {
-              "const": "representation"
-            },
-            "event_type": {
-              "enum": [
-                "create_node_representation",
-                "create_edge_representation"
-              ]
-            },
-            "node_id": {
-              "type": "UUID v7 string"
-            },
-            "underlying_id": {
-              "type": "UUID v7 string",
-              "description": "ID of the base-network node or edge being represented."
-            }
-          }
-        },
-        "edge": {
-          "discriminator": "body_type = 'edge'",
-          "event_types": [
-            "set_node_tag",
-            "set_edge_tag"
-          ],
-          "description": "A directed edge in the meta-network from a tag node to a representation node, meaning: 'this tag is applied to that item'.",
-          "fields": {
-            "body_type": {
-              "const": "edge"
-            },
-            "event_type": {
-              "enum": [
-                "set_node_tag",
-                "set_edge_tag"
-              ]
-            },
-            "edge_id": {
-              "type": "UUID v7 string"
-            },
-            "source_node": {
-              "type": "UUID v7 string",
-              "description": "node_id of the tag."
-            },
-            "target_node": {
-              "type": "UUID v7 string",
-              "description": "node_id of the representation."
-            }
-          }
-        }
-      }
+      },
+      "required": [
+        "prev_hash",
+        "author"
+      ],
+      "title": "EventHeader",
+      "type": "object"
     },
     "EventModel": {
-      "description": "Top-level structure of every NDJSON line in the base event log.",
-      "fields": {
+      "description": "A complete signed base-network log entry.",
+      "properties": {
         "header": {
-          "$ref": "EventHeader"
+          "$ref": "#/schemas/EventHeader"
         },
         "body": {
-          "$ref": "EventBody"
+          "discriminator": {
+            "mapping": {
+              "edge": "#/schemas/Edge",
+              "node": "#/schemas/Node",
+              "supersede_edge": "#/schemas/SupersedeEdge",
+              "supersede_node": "#/schemas/SupersedeNode",
+              "transcription": "#/schemas/Transcription"
+            },
+            "propertyName": "body_type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/schemas/Node"
+            },
+            {
+              "$ref": "#/schemas/Edge"
+            },
+            {
+              "$ref": "#/schemas/SupersedeNode"
+            },
+            {
+              "$ref": "#/schemas/SupersedeEdge"
+            },
+            {
+              "$ref": "#/schemas/Transcription"
+            }
+          ],
+          "title": "Body"
         },
         "signature": {
-          "type": "string | null",
-          "description": "Hex-encoded Ed25519 signature produced by signing the SHA-256 digest of the body serialised as compact JSON with keys sorted alphabetically."
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signature"
         }
-      }
+      },
+      "required": [
+        "header",
+        "body"
+      ],
+      "title": "EventModel",
+      "type": "object"
+    },
+    "LogTip": {
+      "description": "Tip of an event log as recorded in a seal: hash of event number\n``count`` (``None`` exactly when ``count`` is 0).",
+      "properties": {
+        "head": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9-]+:[0-9a-f]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Head"
+        },
+        "count": {
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "head",
+        "count"
+      ],
+      "title": "LogTip",
+      "type": "object"
+    },
+    "MediaType": {
+      "description": "Media types that IndieK considers archival-safe.",
+      "enum": [
+        "text/plain; charset=utf-8",
+        "text/markdown; charset=utf-8",
+        "image/tiff",
+        "image/png",
+        "image/jpeg",
+        "application/pdf; profile=pdfa"
+      ],
+      "title": "MediaType",
+      "type": "string"
+    },
+    "MetaEdge": {
+      "description": "An edge in the tag meta-network.",
+      "properties": {
+        "event_type": {
+          "$ref": "#/schemas/MetaEventType"
+        },
+        "body_type": {
+          "const": "edge",
+          "default": "edge",
+          "title": "Body Type",
+          "type": "string"
+        },
+        "edge_id": {
+          "format": "uuid",
+          "title": "Edge Id",
+          "type": "string"
+        },
+        "source_node": {
+          "format": "uuid",
+          "title": "Source Node",
+          "type": "string"
+        },
+        "target_node": {
+          "format": "uuid",
+          "title": "Target Node",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_type",
+        "source_node",
+        "target_node"
+      ],
+      "title": "MetaEdge",
+      "type": "object"
+    },
+    "MetaEventHeader": {
+      "description": "Header of a meta event: :class:`EventHeader` plus the base anchor.\n\n``base_seq`` is the number of base events the author had verified when\nwriting the meta event, ``base_head`` the hash of base event number\n``base_seq`` (``None`` exactly when ``base_seq`` is 0).  Meta commits to\nbase; base never commits to meta.",
+      "properties": {
+        "version": {
+          "default": "3.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "hash_alg": {
+          "default": "sha256",
+          "title": "Hash Alg",
+          "type": "string"
+        },
+        "sig_alg": {
+          "default": "ed25519",
+          "title": "Sig Alg",
+          "type": "string"
+        },
+        "prev_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9-]+:[0-9a-f]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Prev Hash"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "author": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Author",
+          "type": "string"
+        },
+        "base_head": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9-]+:[0-9a-f]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Base Head"
+        },
+        "base_seq": {
+          "minimum": 0,
+          "title": "Base Seq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "prev_hash",
+        "author",
+        "base_head",
+        "base_seq"
+      ],
+      "title": "MetaEventHeader",
+      "type": "object"
     },
     "MetaEventModel": {
-      "description": "Top-level structure of every NDJSON line in the meta event log.",
-      "fields": {
+      "description": "A complete signed meta-network log entry.",
+      "properties": {
         "header": {
-          "$ref": "EventHeader"
+          "$ref": "#/schemas/MetaEventHeader"
         },
         "body": {
-          "$ref": "MetaEventBody"
+          "discriminator": {
+            "mapping": {
+              "edge": "#/schemas/MetaEdge",
+              "representation": "#/schemas/MetaRepresentation",
+              "tag": "#/schemas/Tag",
+              "transcription": "#/schemas/Transcription"
+            },
+            "propertyName": "body_type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/schemas/MetaRepresentation"
+            },
+            {
+              "$ref": "#/schemas/Tag"
+            },
+            {
+              "$ref": "#/schemas/MetaEdge"
+            },
+            {
+              "$ref": "#/schemas/Transcription"
+            }
+          ],
+          "title": "Body"
         },
         "signature": {
-          "$ref": "EventModel.signature"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signature"
         }
-      }
+      },
+      "required": [
+        "header",
+        "body"
+      ],
+      "title": "MetaEventModel",
+      "type": "object"
+    },
+    "MetaEventType": {
+      "description": "Actions in IndieK's tag meta-network.",
+      "enum": [
+        "create_edge_tag",
+        "create_node_tag",
+        "create_edge_representation",
+        "create_node_representation",
+        "set_edge_tag",
+        "set_node_tag",
+        "transcription"
+      ],
+      "title": "MetaEventType",
+      "type": "string"
+    },
+    "MetaRepresentation": {
+      "description": "A meta-node that represents a base graph item.",
+      "properties": {
+        "event_type": {
+          "$ref": "#/schemas/MetaEventType"
+        },
+        "node_id": {
+          "format": "uuid",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "body_type": {
+          "const": "representation",
+          "default": "representation",
+          "title": "Body Type",
+          "type": "string"
+        },
+        "underlying_id": {
+          "format": "uuid",
+          "title": "Underlying Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_type",
+        "underlying_id"
+      ],
+      "title": "MetaRepresentation",
+      "type": "object"
+    },
+    "Node": {
+      "description": "Create a graph node.",
+      "properties": {
+        "event_type": {
+          "const": "create_node",
+          "default": "create_node",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "resource_type": {
+          "$ref": "#/schemas/ResourceType",
+          "default": "managed"
+        },
+        "media_type": {
+          "anyOf": [
+            {
+              "$ref": "#/schemas/MediaType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "blob_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blob Hash"
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uri"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "file_size": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File Size"
+        },
+        "file_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File Hash"
+        },
+        "last_verified": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Verified"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "body_type": {
+          "const": "node",
+          "default": "node",
+          "title": "Body Type",
+          "type": "string"
+        },
+        "node_id": {
+          "format": "uuid",
+          "title": "Node Id",
+          "type": "string"
+        }
+      },
+      "title": "Node",
+      "type": "object"
+    },
+    "ResourceType": {
+      "description": "Where an event's resource is stored or referenced.",
+      "enum": [
+        "managed",
+        "uri",
+        "local_file"
+      ],
+      "title": "ResourceType",
+      "type": "string"
+    },
+    "SealModel": {
+      "description": "One line of ``seals/seals.ndjson``: a signed checkpoint of the whole\narchive (base tip, meta tip, blob-store Merkle root).\n\n``sig`` covers the canonical bytes of the seal without ``sig``; the seal\nhash is the digest of the whole seal (``sig`` included) and the next\nseal's ``prev_seal_hash``.  Only the first seal has a null\n``prev_seal_hash``; ``seq`` is the seal's 1-based position.",
+      "properties": {
+        "type": {
+          "const": "seal",
+          "default": "seal",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "default": "3.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "prev_seal_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9-]+:[0-9a-f]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Prev Seal Hash"
+        },
+        "base": {
+          "$ref": "#/schemas/LogTip"
+        },
+        "meta": {
+          "$ref": "#/schemas/LogTip"
+        },
+        "blob_root": {
+          "pattern": "^[a-z0-9-]+:[0-9a-f]+$",
+          "title": "Blob Root",
+          "type": "string"
+        },
+        "time": {
+          "format": "date-time",
+          "title": "Time",
+          "type": "string"
+        },
+        "hash_alg": {
+          "default": "sha256",
+          "title": "Hash Alg",
+          "type": "string"
+        },
+        "sig_alg": {
+          "default": "ed25519",
+          "title": "Sig Alg",
+          "type": "string"
+        },
+        "key": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Key",
+          "type": "string"
+        },
+        "sig": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sig"
+        }
+      },
+      "required": [
+        "seq",
+        "prev_seal_hash",
+        "base",
+        "meta",
+        "blob_root",
+        "key"
+      ],
+      "title": "SealModel",
+      "type": "object"
+    },
+    "SupersedeEdge": {
+      "description": "Append new resource metadata for an existing edge without changing topology.",
+      "properties": {
+        "event_type": {
+          "const": "supersede_edge",
+          "default": "supersede_edge",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "resource_type": {
+          "$ref": "#/schemas/ResourceType",
+          "default": "managed"
+        },
+        "media_type": {
+          "anyOf": [
+            {
+              "$ref": "#/schemas/MediaType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "blob_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blob Hash"
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uri"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "file_size": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File Size"
+        },
+        "file_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File Hash"
+        },
+        "last_verified": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Verified"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "body_type": {
+          "const": "supersede_edge",
+          "default": "supersede_edge",
+          "title": "Body Type",
+          "type": "string"
+        },
+        "edge_id": {
+          "format": "uuid",
+          "title": "Edge Id",
+          "type": "string"
+        },
+        "source_node": {
+          "format": "uuid",
+          "title": "Source Node",
+          "type": "string"
+        },
+        "target_node": {
+          "format": "uuid",
+          "title": "Target Node",
+          "type": "string"
+        }
+      },
+      "required": [
+        "edge_id",
+        "source_node",
+        "target_node"
+      ],
+      "title": "SupersedeEdge",
+      "type": "object"
+    },
+    "SupersedeNode": {
+      "description": "Append new resource metadata for an existing node identifier.",
+      "properties": {
+        "event_type": {
+          "const": "supersede_node",
+          "default": "supersede_node",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "resource_type": {
+          "$ref": "#/schemas/ResourceType",
+          "default": "managed"
+        },
+        "media_type": {
+          "anyOf": [
+            {
+              "$ref": "#/schemas/MediaType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "blob_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blob Hash"
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uri"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "file_size": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File Size"
+        },
+        "file_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File Hash"
+        },
+        "last_verified": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Verified"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "body_type": {
+          "const": "supersede_node",
+          "default": "supersede_node",
+          "title": "Body Type",
+          "type": "string"
+        },
+        "node_id": {
+          "format": "uuid",
+          "title": "Node Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "title": "SupersedeNode",
+      "type": "object"
+    },
+    "Tag": {
+      "description": "A reusable tag definition.",
+      "properties": {
+        "event_type": {
+          "$ref": "#/schemas/MetaEventType"
+        },
+        "node_id": {
+          "format": "uuid",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "body_type": {
+          "const": "tag",
+          "default": "tag",
+          "title": "Body Type",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_type",
+        "name",
+        "description"
+      ],
+      "title": "Tag",
+      "type": "object"
+    },
+    "Transcription": {
+      "description": "An attestation, signed under the event's own algorithms: \"I verified\nthis log up to ``verified_head`` (its first ``verified_count`` events)\nunder ``verified_hash_alg`` / ``verified_sig_alg`` at ``verified_at``\".\n\nAllowed in the base and in the meta log; it attests only the log it sits\nin, allocates no alias and changes no projection.",
+      "properties": {
+        "body_type": {
+          "const": "transcription",
+          "default": "transcription",
+          "title": "Body Type",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "transcription",
+          "default": "transcription",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "verified_head": {
+          "pattern": "^[a-z0-9-]+:[0-9a-f]+$",
+          "title": "Verified Head",
+          "type": "string"
+        },
+        "verified_count": {
+          "minimum": 1,
+          "title": "Verified Count",
+          "type": "integer"
+        },
+        "verified_hash_alg": {
+          "title": "Verified Hash Alg",
+          "type": "string"
+        },
+        "verified_sig_alg": {
+          "title": "Verified Sig Alg",
+          "type": "string"
+        },
+        "verified_at": {
+          "format": "date-time",
+          "title": "Verified At",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "verified_head",
+        "verified_count",
+        "verified_hash_alg",
+        "verified_sig_alg"
+      ],
+      "title": "Transcription",
+      "type": "object"
     }
   }
 }

@@ -1,0 +1,318 @@
+{
+  "format_version": "3.0",
+  "description": "Test vectors of the IndieK archive format: an independent implementation must reproduce every hex value from event_unsigned and seed_hex.",
+  "rules": {
+    "canonical_bytes": "RFC 8785 (JCS) restricted to ASCII object keys and integers in [-(2^53-1), 2^53-1]; inside that subset it equals json.dumps(obj, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False) encoded as UTF-8",
+    "integer_range": "every JSON number is an integer in [-(2^53-1), 2^53-1] (-9007199254740991 to 9007199254740991); writers refuse and readers reject any other number",
+    "algorithms": "header.hash_alg and header.sig_alg name the event's algorithms (today 'sha256' and 'ed25519'); digests are written '<hash_alg>:<lowercase hex>' and signatures '<sig_alg>:<lowercase hex>'; the prev_hash and signature prefixes must equal the header's algorithms",
+    "signature": "'ed25519:' + lowercase hex Ed25519 (RFC 8032) signature over canonical_bytes(event without its 'signature' field), no pre-hash",
+    "event_hash": "'sha256:' + lowercase hex SHA-256 of canonical_bytes(whole event, 'signature' included); it is the next event's header.prev_hash",
+    "meta_anchor": "a meta event's header.base_seq counts the base events its author had verified and header.base_head is the event_hash of base event number base_seq (null iff 0); base_seq never decreases along the meta log",
+    "blob_root": "RFC 6962 Merkle Tree Hash (SHA-256) over the ascending-sorted distinct blob digests referenced by the events a seal covers: leaf = SHA-256(0x00 || raw 32-byte digest), node = SHA-256(0x01 || left || right), no blobs = SHA-256(''); written 'sha256:<hex>'",
+    "seal": "sig = 'ed25519:' + Ed25519 over canonical_bytes(seal without 'sig'); seal hash = 'sha256:' + SHA-256 of canonical_bytes(whole seal)",
+    "transcription": "a transcription event attests its own log: verified_head must equal the event_hash of event number verified_count (1-based) of that log, and verified_count must be smaller than the transcription's own position",
+    "strict_parsing": "a log line that is not UTF-8, not one JSON object, or holds a duplicate key, a non-integer number (fraction, exponent, NaN, Infinity), an integer outside the range above or a string with a lone surrogate is invalid"
+  },
+  "vectors": [
+    {
+      "name": "base genesis create_node, non-ASCII content and title",
+      "seed_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+      "public_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+      "event_unsigned": {
+        "header": {
+          "version": "3.0",
+          "hash_alg": "sha256",
+          "sig_alg": "ed25519",
+          "prev_hash": null,
+          "timestamp": "2026-10-17T12:00:00Z",
+          "author": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+        },
+        "body": {
+          "event_type": "create_node",
+          "resource_type": "managed",
+          "media_type": "text/plain; charset=utf-8",
+          "blob_hash": "sha256:71a0b54b349d9f8a95d6bb621386c3cb939b0a711dbf4e746e3031c38b4104f5",
+          "uri": null,
+          "path": null,
+          "file_size": null,
+          "file_hash": null,
+          "last_verified": null,
+          "title": "Gödel — incompleteness",
+          "body_type": "node",
+          "node_id": "019a0000-0000-7000-8000-000000000001"
+        }
+      },
+      "signing_bytes_hex": "7b22626f6479223a7b22626c6f625f68617368223a227368613235363a37316130623534623334396439663861393564366262363231333836633363623933396230613731316462663465373436653330333163333862343130346635222c22626f64795f74797065223a226e6f6465222c226576656e745f74797065223a226372656174655f6e6f6465222c2266696c655f68617368223a6e756c6c2c2266696c655f73697a65223a6e756c6c2c226c6173745f7665726966696564223a6e756c6c2c226d656469615f74797065223a22746578742f706c61696e3b20636861727365743d7574662d38222c226e6f64655f6964223a2230313961303030302d303030302d373030302d383030302d303030303030303030303031222c2270617468223a6e756c6c2c227265736f757263655f74797065223a226d616e61676564222c227469746c65223a2247c3b664656c20e2809420696e636f6d706c6574656e657373222c22757269223a6e756c6c7d2c22686561646572223a7b22617574686f72223a2238613838653364643734303966313935666435326462326433636261356437326361363730396266316439343132316266333734383830316234306636663563222c22686173685f616c67223a22736861323536222c22707265765f68617368223a6e756c6c2c227369675f616c67223a2265643235353139222c2274696d657374616d70223a22323032362d31302d31375431323a30303a30305a222c2276657273696f6e223a22332e30227d7d",
+      "signature": "ed25519:b88ad97c5c9e3fe6efd00ec1583b761f4254edd75a7aeccfe67d16fe2d0856a83f4063bab7c2da77ee17f5c14e72f4f2bd3f7a8075cc5c098ed56a25dc32290f",
+      "event": {
+        "header": {
+          "version": "3.0",
+          "hash_alg": "sha256",
+          "sig_alg": "ed25519",
+          "prev_hash": null,
+          "timestamp": "2026-10-17T12:00:00Z",
+          "author": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+        },
+        "body": {
+          "event_type": "create_node",
+          "resource_type": "managed",
+          "media_type": "text/plain; charset=utf-8",
+          "blob_hash": "sha256:71a0b54b349d9f8a95d6bb621386c3cb939b0a711dbf4e746e3031c38b4104f5",
+          "uri": null,
+          "path": null,
+          "file_size": null,
+          "file_hash": null,
+          "last_verified": null,
+          "title": "Gödel — incompleteness",
+          "body_type": "node",
+          "node_id": "019a0000-0000-7000-8000-000000000001"
+        },
+        "signature": "ed25519:b88ad97c5c9e3fe6efd00ec1583b761f4254edd75a7aeccfe67d16fe2d0856a83f4063bab7c2da77ee17f5c14e72f4f2bd3f7a8075cc5c098ed56a25dc32290f"
+      },
+      "event_hash": "sha256:f1101d5a764fcd42c3555ea982a2b30c3bb412015fdfe2b752fc8aad103b41ef"
+    },
+    {
+      "name": "base create_edge chained onto the genesis event",
+      "seed_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+      "public_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+      "event_unsigned": {
+        "header": {
+          "version": "3.0",
+          "hash_alg": "sha256",
+          "sig_alg": "ed25519",
+          "prev_hash": "sha256:f1101d5a764fcd42c3555ea982a2b30c3bb412015fdfe2b752fc8aad103b41ef",
+          "timestamp": "2026-10-17T12:00:00Z",
+          "author": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+        },
+        "body": {
+          "event_type": "create_edge",
+          "resource_type": "managed",
+          "media_type": "text/plain; charset=utf-8",
+          "blob_hash": "sha256:371c7a20c48187bfcdc0796d5e53cabeb68d743a74389090e2174e2ae49dc531",
+          "uri": null,
+          "path": null,
+          "file_size": null,
+          "file_hash": null,
+          "last_verified": null,
+          "title": null,
+          "body_type": "edge",
+          "edge_id": "019a0000-0000-7000-8000-000000000002",
+          "source_node": "019a0000-0000-7000-8000-000000000001",
+          "target_node": "019a0000-0000-7000-8000-000000000001"
+        }
+      },
+      "signing_bytes_hex": "7b22626f6479223a7b22626c6f625f68617368223a227368613235363a33373163376132306334383138376266636463303739366435653533636162656236386437343361373433383930393065323137346532616534396463353331222c22626f64795f74797065223a2265646765222c22656467655f6964223a2230313961303030302d303030302d373030302d383030302d303030303030303030303032222c226576656e745f74797065223a226372656174655f65646765222c2266696c655f68617368223a6e756c6c2c2266696c655f73697a65223a6e756c6c2c226c6173745f7665726966696564223a6e756c6c2c226d656469615f74797065223a22746578742f706c61696e3b20636861727365743d7574662d38222c2270617468223a6e756c6c2c227265736f757263655f74797065223a226d616e61676564222c22736f757263655f6e6f6465223a2230313961303030302d303030302d373030302d383030302d303030303030303030303031222c227461726765745f6e6f6465223a2230313961303030302d303030302d373030302d383030302d303030303030303030303031222c227469746c65223a6e756c6c2c22757269223a6e756c6c7d2c22686561646572223a7b22617574686f72223a2238613838653364643734303966313935666435326462326433636261356437326361363730396266316439343132316266333734383830316234306636663563222c22686173685f616c67223a22736861323536222c22707265765f68617368223a227368613235363a66313130316435613736346663643432633335353565613938326132623330633362623431323031356664666532623735326663386161643130336234316566222c227369675f616c67223a2265643235353139222c2274696d657374616d70223a22323032362d31302d31375431323a30303a30305a222c2276657273696f6e223a22332e30227d7d",
+      "signature": "ed25519:ebbe84d77f53757c92de64977e27edfc49ac9e5ef1295a975b1f31571ec2b78e0ba98412d524090a29e0dc265115893704ae09b4dca6975ff8e1e90317094e02",
+      "event": {
+        "header": {
+          "version": "3.0",
+          "hash_alg": "sha256",
+          "sig_alg": "ed25519",
+          "prev_hash": "sha256:f1101d5a764fcd42c3555ea982a2b30c3bb412015fdfe2b752fc8aad103b41ef",
+          "timestamp": "2026-10-17T12:00:00Z",
+          "author": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+        },
+        "body": {
+          "event_type": "create_edge",
+          "resource_type": "managed",
+          "media_type": "text/plain; charset=utf-8",
+          "blob_hash": "sha256:371c7a20c48187bfcdc0796d5e53cabeb68d743a74389090e2174e2ae49dc531",
+          "uri": null,
+          "path": null,
+          "file_size": null,
+          "file_hash": null,
+          "last_verified": null,
+          "title": null,
+          "body_type": "edge",
+          "edge_id": "019a0000-0000-7000-8000-000000000002",
+          "source_node": "019a0000-0000-7000-8000-000000000001",
+          "target_node": "019a0000-0000-7000-8000-000000000001"
+        },
+        "signature": "ed25519:ebbe84d77f53757c92de64977e27edfc49ac9e5ef1295a975b1f31571ec2b78e0ba98412d524090a29e0dc265115893704ae09b4dca6975ff8e1e90317094e02"
+      },
+      "event_hash": "sha256:3e65db555da6ca994f0948112bb8bf50194d2929e3047a1586e6f8118e01183b"
+    },
+    {
+      "name": "meta genesis create_node_tag by a second author, anchored to base event 2",
+      "seed_hex": "0202020202020202020202020202020202020202020202020202020202020202",
+      "public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+      "event_unsigned": {
+        "header": {
+          "version": "3.0",
+          "hash_alg": "sha256",
+          "sig_alg": "ed25519",
+          "prev_hash": null,
+          "timestamp": "2026-10-17T12:00:00Z",
+          "author": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+          "base_head": "sha256:3e65db555da6ca994f0948112bb8bf50194d2929e3047a1586e6f8118e01183b",
+          "base_seq": 2
+        },
+        "body": {
+          "event_type": "create_node_tag",
+          "node_id": "019a0000-0000-7000-8000-000000000003",
+          "body_type": "tag",
+          "name": "théorème",
+          "description": "A proven statement"
+        }
+      },
+      "signing_bytes_hex": "7b22626f6479223a7b22626f64795f74797065223a22746167222c226465736372697074696f6e223a22412070726f76656e2073746174656d656e74222c226576656e745f74797065223a226372656174655f6e6f64655f746167222c226e616d65223a227468c3a96f72c3a86d65222c226e6f64655f6964223a2230313961303030302d303030302d373030302d383030302d303030303030303030303033227d2c22686561646572223a7b22617574686f72223a2238313339373730656138376431373566353661333534363663333463376563636362386438613931623465653337613235646636306635623866633962333934222c22626173655f68656164223a227368613235363a33653635646235353564613663613939346630393438313132626238626635303139346432393239653330343761313538366536663831313865303131383362222c22626173655f736571223a322c22686173685f616c67223a22736861323536222c22707265765f68617368223a6e756c6c2c227369675f616c67223a2265643235353139222c2274696d657374616d70223a22323032362d31302d31375431323a30303a30305a222c2276657273696f6e223a22332e30227d7d",
+      "signature": "ed25519:6e05e3f43579e98f180cf85557d117d0e768e56fc1acd93844b690c3bf579033983bc56a98ef9833aabc6e823aae0bb90b0f20727d004cea4cb252ee7c8a670e",
+      "event": {
+        "header": {
+          "version": "3.0",
+          "hash_alg": "sha256",
+          "sig_alg": "ed25519",
+          "prev_hash": null,
+          "timestamp": "2026-10-17T12:00:00Z",
+          "author": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+          "base_head": "sha256:3e65db555da6ca994f0948112bb8bf50194d2929e3047a1586e6f8118e01183b",
+          "base_seq": 2
+        },
+        "body": {
+          "event_type": "create_node_tag",
+          "node_id": "019a0000-0000-7000-8000-000000000003",
+          "body_type": "tag",
+          "name": "théorème",
+          "description": "A proven statement"
+        },
+        "signature": "ed25519:6e05e3f43579e98f180cf85557d117d0e768e56fc1acd93844b690c3bf579033983bc56a98ef9833aabc6e823aae0bb90b0f20727d004cea4cb252ee7c8a670e"
+      },
+      "event_hash": "sha256:ed43a744adc849adce7faf72ec1f4e2cdcc9cc10e3f2c61aa107ad7721291bcf"
+    },
+    {
+      "name": "base transcription by a second author attesting the first two events",
+      "seed_hex": "0202020202020202020202020202020202020202020202020202020202020202",
+      "public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+      "event_unsigned": {
+        "header": {
+          "version": "3.0",
+          "hash_alg": "sha256",
+          "sig_alg": "ed25519",
+          "prev_hash": "sha256:3e65db555da6ca994f0948112bb8bf50194d2929e3047a1586e6f8118e01183b",
+          "timestamp": "2026-10-17T12:00:00Z",
+          "author": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394"
+        },
+        "body": {
+          "body_type": "transcription",
+          "event_type": "transcription",
+          "verified_head": "sha256:3e65db555da6ca994f0948112bb8bf50194d2929e3047a1586e6f8118e01183b",
+          "verified_count": 2,
+          "verified_hash_alg": "sha256",
+          "verified_sig_alg": "ed25519",
+          "verified_at": "2026-10-17T12:00:00Z",
+          "note": "re-verified"
+        }
+      },
+      "signing_bytes_hex": "7b22626f6479223a7b22626f64795f74797065223a227472616e736372697074696f6e222c226576656e745f74797065223a227472616e736372697074696f6e222c226e6f7465223a2272652d7665726966696564222c2276657269666965645f6174223a22323032362d31302d31375431323a30303a30305a222c2276657269666965645f636f756e74223a322c2276657269666965645f686173685f616c67223a22736861323536222c2276657269666965645f68656164223a227368613235363a33653635646235353564613663613939346630393438313132626238626635303139346432393239653330343761313538366536663831313865303131383362222c2276657269666965645f7369675f616c67223a2265643235353139227d2c22686561646572223a7b22617574686f72223a2238313339373730656138376431373566353661333534363663333463376563636362386438613931623465653337613235646636306635623866633962333934222c22686173685f616c67223a22736861323536222c22707265765f68617368223a227368613235363a33653635646235353564613663613939346630393438313132626238626635303139346432393239653330343761313538366536663831313865303131383362222c227369675f616c67223a2265643235353139222c2274696d657374616d70223a22323032362d31302d31375431323a30303a30305a222c2276657273696f6e223a22332e30227d7d",
+      "signature": "ed25519:42a3f08c963ae5582469cb33cfb9c839d1672a3984f040df37b17e60e16365c50ffa499a2b91dff0848cbc3f6f3fbb29674192ff3d7a946fe6a916a1687f2002",
+      "event": {
+        "header": {
+          "version": "3.0",
+          "hash_alg": "sha256",
+          "sig_alg": "ed25519",
+          "prev_hash": "sha256:3e65db555da6ca994f0948112bb8bf50194d2929e3047a1586e6f8118e01183b",
+          "timestamp": "2026-10-17T12:00:00Z",
+          "author": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394"
+        },
+        "body": {
+          "body_type": "transcription",
+          "event_type": "transcription",
+          "verified_head": "sha256:3e65db555da6ca994f0948112bb8bf50194d2929e3047a1586e6f8118e01183b",
+          "verified_count": 2,
+          "verified_hash_alg": "sha256",
+          "verified_sig_alg": "ed25519",
+          "verified_at": "2026-10-17T12:00:00Z",
+          "note": "re-verified"
+        },
+        "signature": "ed25519:42a3f08c963ae5582469cb33cfb9c839d1672a3984f040df37b17e60e16365c50ffa499a2b91dff0848cbc3f6f3fbb29674192ff3d7a946fe6a916a1687f2002"
+      },
+      "event_hash": "sha256:e19ed57fb0b95341a097914dac7b1788e5e0d6a04d7c9e7dd988ecb4ece52860"
+    }
+  ],
+  "merkle_vectors": [
+    {
+      "leaves": [],
+      "root": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "leaves": [
+        "a32b217ef17069c89f5f22c5a0b1b0f1292375d7304acc3f5d8a6ecc7e0c7208"
+      ],
+      "root": "sha256:dad7777a219cbda19ae44a2f819b6690d81b30928db1ab99e9ea79a7272c11d1"
+    },
+    {
+      "leaves": [
+        "8ea720af7d06fc784e8a1e71cf77659b56e75cbed34969abb290689af960c86d",
+        "a32b217ef17069c89f5f22c5a0b1b0f1292375d7304acc3f5d8a6ecc7e0c7208"
+      ],
+      "root": "sha256:77381fcf392e0100025a0b6c5c9a84fc22dd4ba57896b64b9b72ad57981f2272"
+    },
+    {
+      "leaves": [
+        "8ea720af7d06fc784e8a1e71cf77659b56e75cbed34969abb290689af960c86d",
+        "974b8f4f45ebf7114bdbcb2e9132662134d46b6fe433660b7b2e93ce096b269a",
+        "a32b217ef17069c89f5f22c5a0b1b0f1292375d7304acc3f5d8a6ecc7e0c7208"
+      ],
+      "root": "sha256:5e33f5d7dbc56fcd0637f1c42d8fe642ff0feae97b1fa1c9a22a3b4a4103a98c"
+    },
+    {
+      "leaves": [
+        "8ea720af7d06fc784e8a1e71cf77659b56e75cbed34969abb290689af960c86d",
+        "974b8f4f45ebf7114bdbcb2e9132662134d46b6fe433660b7b2e93ce096b269a",
+        "a32b217ef17069c89f5f22c5a0b1b0f1292375d7304acc3f5d8a6ecc7e0c7208",
+        "dc383e6cb34a818fc2f8469077cd5ff3589f0a548d2717c67d536a7dab6d5515",
+        "dfa4cb22d9ed2cdee3e52925d2fe3b537532082b36556f929aa1d188a34c2e43"
+      ],
+      "root": "sha256:1e0a946cf546472c86f0ec47a04fc165a5e2e4092af4a399b818a3eea9d1a614"
+    }
+  ],
+  "seal_vectors": [
+    {
+      "name": "first seal of the three base vectors and the meta vector",
+      "seed_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+      "public_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+      "seal_unsigned": {
+        "type": "seal",
+        "version": "3.0",
+        "seq": 1,
+        "prev_seal_hash": null,
+        "base": {
+          "head": "sha256:e19ed57fb0b95341a097914dac7b1788e5e0d6a04d7c9e7dd988ecb4ece52860",
+          "count": 3
+        },
+        "meta": {
+          "head": "sha256:ed43a744adc849adce7faf72ec1f4e2cdcc9cc10e3f2c61aa107ad7721291bcf",
+          "count": 1
+        },
+        "blob_root": "sha256:e6dd6ee18b7b4127f457b4c23972d52c0b1348720de14b4e92fb70fab3c0a50b",
+        "time": "2026-10-17T12:00:00Z",
+        "hash_alg": "sha256",
+        "sig_alg": "ed25519",
+        "key": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+      },
+      "signing_bytes_hex": "7b2262617365223a7b22636f756e74223a332c2268656164223a227368613235363a65313965643537666230623935333431613039373931346461633762313738386535653064366130346437633965376464393838656362346563653532383630227d2c22626c6f625f726f6f74223a227368613235363a65366464366565313862376234313237663435376234633233393732643532633062313334383732306465313462346539326662373066616233633061353062222c22686173685f616c67223a22736861323536222c226b6579223a2238613838653364643734303966313935666435326462326433636261356437326361363730396266316439343132316266333734383830316234306636663563222c226d657461223a7b22636f756e74223a312c2268656164223a227368613235363a65643433613734346164633834396164636537666166373265633166346532636463633963633130653366326336316161313037616437373231323931626366227d2c22707265765f7365616c5f68617368223a6e756c6c2c22736571223a312c227369675f616c67223a2265643235353139222c2274696d65223a22323032362d31302d31375431323a30303a30305a222c2274797065223a227365616c222c2276657273696f6e223a22332e30227d",
+      "sig": "ed25519:fa926d9c3ecbbb164ab3f00b0ca67bd3cbbdfd7042fe8dcd995747bca712e9933794ecff6ea4b68e4f9c647e08f2dcd62b4ff97b3de711753f4b87c02a07c505",
+      "seal": {
+        "type": "seal",
+        "version": "3.0",
+        "seq": 1,
+        "prev_seal_hash": null,
+        "base": {
+          "head": "sha256:e19ed57fb0b95341a097914dac7b1788e5e0d6a04d7c9e7dd988ecb4ece52860",
+          "count": 3
+        },
+        "meta": {
+          "head": "sha256:ed43a744adc849adce7faf72ec1f4e2cdcc9cc10e3f2c61aa107ad7721291bcf",
+          "count": 1
+        },
+        "blob_root": "sha256:e6dd6ee18b7b4127f457b4c23972d52c0b1348720de14b4e92fb70fab3c0a50b",
+        "time": "2026-10-17T12:00:00Z",
+        "hash_alg": "sha256",
+        "sig_alg": "ed25519",
+        "key": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "sig": "ed25519:fa926d9c3ecbbb164ab3f00b0ca67bd3cbbdfd7042fe8dcd995747bca712e9933794ecff6ea4b68e4f9c647e08f2dcd62b4ff97b3de711753f4b87c02a07c505"
+      },
+      "seal_hash": "sha256:c2214edc62b48483cb0437f15e14c23826f50702088bc31218a010255922c6d7"
+    }
+  ]
+}

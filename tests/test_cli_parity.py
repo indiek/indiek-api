@@ -86,7 +86,7 @@ def test_supersede_edge_with_a_node_id(workspace: Workspace) -> None:
     response = workspace.client.put(
         _url(workspace, f"/edges/{workspace.sample.node_a}"), json={"content": "x"}
     )
-    _assert_error(response, 422, "archive_rule")
+    _assert_error(response, 404, "item_not_found")
 
 
 def test_supersede_edge_requires_content(workspace: Workspace) -> None:

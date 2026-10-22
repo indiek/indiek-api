@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from indiek.blob import IntegrityError
+from indiek import AuthorshipError, IndieKError, IntegrityError, UnknownItemError
 
 
 class IndieKAPIError(Exception):
@@ -66,27 +66,18 @@ class MissingAuthorKeyError(IndieKAPIError):
     status_code, code = 503, "author_key_missing"
 
 
-# Substrings of the `indiek` library messages documented in public_archive/README.md.
-_FORBIDDEN_MARKERS = ("Only the tag's author",)
-_NOT_FOUND_MARKERS = (
-    "does not exist in this archive",
-    "NOT FOUND IN ARCHIVE",
-    "not part of any network",
-    "badly formed hexadecimal UUID string",
-)
-
-
 def translate_library_error(exc: Exception) -> IndieKAPIError:
-    """Classify an exception raised by the `indiek` library."""
+    """Classify an exception raised by the `indiek` SDK by its type."""
     if isinstance(exc, IndieKAPIError):
         return exc
     message = str(exc) or type(exc).__name__
     if isinstance(exc, IntegrityError):
         return ArchiveIntegrityError(message)
-    if any(marker in message for marker in _FORBIDDEN_MARKERS):
+    if isinstance(exc, AuthorshipError):
         return ForbiddenError(message)
-    if any(marker in message for marker in _NOT_FOUND_MARKERS):
+    if isinstance(exc, UnknownItemError):
         return ItemNotFoundError(message)
+    # The SDK's ArchiveRuleError, and ValueError from its input validation.
     return ArchiveRuleError(message)
 
 
@@ -97,7 +88,7 @@ def library_errors() -> Iterator[None]:
         yield
     except IndieKAPIError:
         raise
-    except (IntegrityError, ValueError, KeyError) as exc:
+    except (IndieKError, ValueError) as exc:
         raise translate_library_error(exc) from exc
 
 

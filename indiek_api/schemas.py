@@ -6,9 +6,9 @@ from typing import Annotated, Any, Literal
 
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 
-from indiek.models import MediaType
+from indiek import MediaType
 
-# Values of indiek.models.MediaType that the node editor can produce.
+# Values of indiek.MediaType that the node editor can produce.
 EditorMediaType = Literal["text/markdown; charset=utf-8", "text/plain; charset=utf-8"]
 
 

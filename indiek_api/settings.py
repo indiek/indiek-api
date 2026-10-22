@@ -5,23 +5,16 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from dotenv import load_dotenv
 
-from indiek.signing import get_signing_key
+from indiek import Author
 
 from indiek_api.errors import MissingAuthorKeyError
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 # The API signs archive writes with the user's key: never expose it beyond this machine.
 LOOPBACK = "127.0.0.1"
-
-
-@dataclass(frozen=True)
-class AuthorCredentials:
-    public_key: str
-    signing_key: Any
 
 
 @dataclass(frozen=True)
@@ -57,17 +50,16 @@ class Settings:
         if self.env_file is not None and self.env_file.is_file():
             load_dotenv(self.env_file, override=False)
 
-    def author_credentials(self) -> AuthorCredentials:
-        """Return the key that signs writes, read fresh from ``IK_AUTHOR_PRIVATE_KEY``."""
+    def author(self) -> Author:
+        """Return the author that signs writes, read fresh from ``IK_AUTHOR_PRIVATE_KEY``."""
         seed = os.getenv("IK_AUTHOR_PRIVATE_KEY", "").strip()
         if not seed:
             raise MissingAuthorKeyError(
                 "Archive writes need IK_AUTHOR_PRIVATE_KEY (64 hex characters) in the API environment."
             )
         try:
-            signing_key = get_signing_key(seed)
+            return Author.from_seed_hex(seed)
         except ValueError as exc:
             raise MissingAuthorKeyError(
                 "IK_AUTHOR_PRIVATE_KEY must be a 32-byte Ed25519 seed written as 64 hex characters."
             ) from exc
-        return AuthorCredentials(signing_key.verify_key.encode().hex(), signing_key)

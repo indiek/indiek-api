@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from indiek import create_node_tag
+from indiek import Author
 
 from indiek_api.settings import Settings
 
-from conftest import Author, SampleArchive, Workspace, open_index, tamper_last_signature
+from conftest import SampleArchive, Workspace, open_archive, tamper_last_signature
 
 
 def _graph(ws: Workspace) -> dict:
@@ -103,7 +103,7 @@ def test_graph_payload(workspace: Workspace, author: Author) -> None:
     node_a = nodes[sample.node_a]
     assert node_a["alias"] == "e1"
     assert node_a["title"] == "A"
-    assert node_a["author"] == author.public_key
+    assert node_a["author"] == author.public_key_hex
     assert node_a["resource_type"] == "managed"
     assert node_a["tags"] == [sample.node_tag]
 
@@ -249,13 +249,7 @@ def test_assign_tag_kind_mismatch(workspace: Workspace) -> None:
 
 
 def test_assign_another_authors_tag(workspace: Workspace, other_author: Author) -> None:
-    create_node_tag.run(
-        tag_name="foreign",
-        tag_description="Not ours",
-        curr_public_key=other_author.public_key,
-        curr_signing_key=other_author.signing_key,
-        archive_idx=open_index(workspace.sample.root),
-    )
+    open_archive(workspace.sample.root, other_author).create_tag("foreign", "Not ours", kind="node")
     foreign = next(t for t in _graph(workspace)["tags"] if t["name"] == "foreign")
     response = workspace.client.post(
         f"/api/workspaces/{workspace.workspace_id}/tags/{foreign['id']}/assignments",

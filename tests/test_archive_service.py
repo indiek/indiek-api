@@ -7,14 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from indiek.create_node import create_node_from_content
-from indiek.models import MediaType
-from indiek.supersede_node import create_supersede_event
+from indiek import Author
 
 from indiek_api.archive_service import ArchiveService
 from indiek_api.errors import ArchiveIntegrityError, ArchiveNotFoundError
 
-from conftest import Author, SampleArchive, open_index, tamper_last_signature
+from conftest import SampleArchive, open_archive, tamper_last_signature
 
 
 # --- projection --------------------------------------------------------------
@@ -28,7 +26,7 @@ def test_projection_of_sample_archive(sample_archive: SampleArchive, author: Aut
     assert set(projection.tags) == {sample_archive.node_tag}
 
     node_a = projection.nodes[sample_archive.node_a]
-    assert (node_a.alias, node_a.title, node_a.author) == ("e1", "A", author.public_key)
+    assert (node_a.alias, node_a.title, node_a.author) == ("e1", "A", author.public_key_hex)
     assert node_a.resource_type == "managed"
     assert node_a.media_type == "text/plain; charset=utf-8"
     assert node_a.tags == (sample_archive.node_tag,)
@@ -154,14 +152,7 @@ def test_projection_is_cached_until_the_log_changes(
     assert service.projection() is first
 
     # An outside writer (the CLI, a git pull) appends to the log behind our back.
-    create_node_from_content(
-        open_index(sample_archive.root),
-        "external",
-        MediaType.TEXT_PLAIN,
-        author.public_key,
-        author.signing_key,
-        None,
-    )
+    open_archive(sample_archive.root, author).create_node("external")
     refreshed = service.projection()
     assert refreshed is not first
     assert len(refreshed.nodes) == 3
@@ -195,18 +186,11 @@ def test_write_returns_the_operation_result_and_refreshes(
     service = ArchiveService(sample_archive.root)
     before = service.projection()
     node_id = service.write(
-        lambda index: create_supersede_event(
-            archive_idx=index,
-            node_id=sample_archive.node_b,
-            content="# Lemma B, revised",
-            title="B2",
-            media_type=MediaType.TEXT_MARKDOWN,
-            public_key=author.public_key,
-            signing_key=author.signing_key,
-        )
+        author,
+        lambda ik: ik.supersede_node(sample_archive.node_b, "# Lemma B, revised", title="B2"),
     )
     after = service.projection()
-    assert node_id == sample_archive.node_b
+    assert str(node_id) == sample_archive.node_b
     assert after is not before
     node_b = after.nodes[sample_archive.node_b]
     assert (node_b.title, node_b.alias, node_b.revised) == ("B2", "e2", True)
@@ -220,16 +204,7 @@ def test_concurrent_writes_keep_the_chain_valid(
 
     def add_node(i: int) -> None:
         try:
-            service.write(
-                lambda index: create_node_from_content(
-                    index,
-                    f"concurrent {i}",
-                    MediaType.TEXT_PLAIN,
-                    author.public_key,
-                    author.signing_key,
-                    None,
-                )
-            )
+            service.write(author, lambda ik: ik.create_node(f"concurrent {i}"))
         except BaseException as exc:  # noqa: BLE001 - surfaced by the assertion below
             errors.append(exc)
 
@@ -240,5 +215,5 @@ def test_concurrent_writes_keep_the_chain_valid(
         thread.join()
 
     assert errors == []
-    open_index(sample_archive.root)  # raises IntegrityError if the chain forked
+    open_archive(sample_archive.root)  # raises IntegrityError if the chain forked
     assert len(service.projection().nodes) == 2 + 8
