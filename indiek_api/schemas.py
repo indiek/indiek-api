@@ -73,14 +73,17 @@ NodeCreate = Annotated[
 ]
 
 
+_EDGE_CONTENT_DOC = "Edge text; omit or null for an edge without content (indiek format 3.1)."
+
+
 class EdgeWrite(BaseModel):
-    content: str = Field(min_length=1)
+    content: str | None = Field(default=None, min_length=1, description=_EDGE_CONTENT_DOC)
 
 
 class EdgeCreate(BaseModel):
     source: str = Field(min_length=1, description="Node UUID or e{n} alias.")
     target: str = Field(min_length=1, description="Node UUID or e{n} alias.")
-    content: str = Field(min_length=1)
+    content: str | None = Field(default=None, min_length=1, description=_EDGE_CONTENT_DOC)
 
 
 class TagCreate(BaseModel):
@@ -129,6 +132,7 @@ class EdgeOut(_FromView):
     target: str
     title: str | None
     author: str
+    resource_type: str = Field(description='"managed", or "none" for an edge without content.')
     media_type: str | None
     blob_hash: str | None
     tags: list[str]

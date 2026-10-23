@@ -89,9 +89,52 @@ def test_supersede_edge_with_a_node_id(workspace: Workspace) -> None:
     _assert_error(response, 404, "item_not_found")
 
 
-def test_supersede_edge_requires_content(workspace: Workspace) -> None:
+def test_supersede_edge_rejects_empty_content(workspace: Workspace) -> None:
     response = workspace.client.put(_url(workspace, "/edges/e3"), json={"content": ""})
     _assert_error(response, 422)
+
+
+def test_edges_report_their_resource_type(workspace: Workspace) -> None:
+    (edge,) = _graph(workspace)["edges"]
+    assert edge["resource_type"] == "managed"
+
+
+# --- content-less edges (indiek format 3.1) ----------------------------------
+
+
+@pytest.mark.parametrize("payload", [{}, {"content": None}])
+def test_create_edge_without_content(workspace: Workspace, payload: dict) -> None:
+    response = workspace.client.post(
+        _url(workspace, "/edges"), json={"source": "e1", "target": "e2", **payload}
+    )
+    assert response.status_code == 201, response.text
+    edge = _by_id(_graph(workspace)["edges"])[response.json()["id"]]
+    assert (edge["resource_type"], edge["content"], edge["blob_hash"], edge["media_type"]) == (
+        "none",
+        None,
+        None,
+        None,
+    )
+
+
+@pytest.mark.parametrize("payload", [{}, {"content": None}])
+def test_supersede_edge_removes_then_restores_content(workspace: Workspace, payload: dict) -> None:
+    edge_id = workspace.sample.edge
+    response = workspace.client.put(_url(workspace, f"/edges/{edge_id}"), json=payload)
+    assert response.status_code == 200, response.text
+    edge = _by_id(_graph(workspace)["edges"])[edge_id]
+    assert (edge["resource_type"], edge["content"], edge["revised"]) == ("none", None, True)
+
+    workspace.client.put(_url(workspace, f"/edges/{edge_id}"), json={"content": "uses again"})
+    edge = _by_id(_graph(workspace)["edges"])[edge_id]
+    assert (edge["resource_type"], edge["content"]) == ("managed", "uses again")
+
+
+def test_content_less_edge_events_are_format_3_1(workspace: Workspace) -> None:
+    workspace.client.post(_url(workspace, "/edges"), json={"source": "e1", "target": "e2"})
+    (log_file,) = sorted((workspace.sample.root / "events").rglob("*ndjson"))
+    versions = [line.split('"version":"')[1][:3] for line in log_file.read_text().splitlines()]
+    assert versions == ["3.0", "3.0", "3.0", "3.1"]
 
 
 # --- uri nodes ---------------------------------------------------------------
@@ -157,6 +200,17 @@ def test_create_local_file_node(workspace: Workspace, tmp_path: Path) -> None:
     assert node["file_hash"].endswith(hashlib.sha256(note.read_bytes()).hexdigest())
     assert node["blob_hash"] is None
     assert not list(workspace.sample.root.rglob("note.md")), "local files are never copied"
+
+
+def test_create_local_file_pdf_node(workspace: Workspace, tmp_path: Path) -> None:
+    paper = tmp_path / "paper.pdf"
+    paper.write_bytes(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
+    response = workspace.client.post(
+        _url(workspace, "/nodes"), json={"resource_type": "local_file", "path": str(paper)}
+    )
+    assert response.status_code == 201, response.text
+    node = _by_id(_graph(workspace)["nodes"])[response.json()["id"]]
+    assert (node["media_type"], node["title"]) == ("application/pdf; profile=pdfa", "paper")
 
 
 def test_local_file_title_override(workspace: Workspace, tmp_path: Path) -> None:

@@ -151,13 +151,13 @@ Full request/response schemas: http://127.0.0.1:8000/docs.
 | `GET /api/workspaces` | — | `[{workspace_id, name, path, created_at}]` |
 | `POST /api/workspaces` | `{path}` | `201` new / `200` already registered, same shape |
 | `DELETE /api/workspaces/{id}` | — | `204`; forgets the folder, files are never touched |
-| `GET …/graph` | — | `{head, meta_head, nodes[], edges[], tags[]}` — supersedes applied, aliases, tag kinds |
+| `GET …/graph` | — | `{head, meta_head, nodes[], edges[], tags[]}` — supersedes applied, aliases, tag kinds; each edge has `resource_type` (`"managed"`, or `"none"` without content) |
 | `GET …/blobs/{sha256}` | — | blob bytes with their media type (hex, prefix allowed) |
 | `GET …/events` | — | base + meta event logs in log order (like `ik read`) |
 | `POST …/nodes` | `{resource_type?: "managed", content, title?, media_type?}` \| `{resource_type: "uri", uri, title?, media_type?}` \| `{resource_type: "local_file", path, title?}` | `201 {id, alias}` |
 | `PUT …/nodes/{id}` | `{content, title?}` (stored as Markdown) | `{id, alias}` |
-| `POST …/edges` | `{source, target, content}` | `201 {id, alias}` |
-| `PUT …/edges/{id}` | `{content}` | `{id, alias}` |
+| `POST …/edges` | `{source, target, content?}` — omit `content` (or `null`) for an edge without content | `201 {id, alias}` |
+| `PUT …/edges/{id}` | `{content?}` — omit or `null` to remove the edge's content | `{id, alias}` |
 | `POST …/tags` | `{name, description, kind: "node" \| "edge"}` | `201 {id, alias}` |
 | `POST …/tags/{tag}/assignments` | `{target}` | `201 {target, tags[]}` — tag kind must match the target; only the tag's author may assign it |
 

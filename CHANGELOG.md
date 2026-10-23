@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.13.0 — 2026-10-22
+
+Follows `indiek` 1.1.0 and the format 3.1. 
+
+### Added
+- Edges without content (indiek format 3.1): `POST …/edges` accepts `content` omitted or
+  `null`; `PUT …/edges/{id}` without `content` (or `null`) removes an edge's content, and a
+  later `PUT` with text restores it. An empty string is still `422`.
+- `EdgeOut.resource_type` in `GET …/graph`: `"managed"`, or `"none"` for an edge without
+  content (whose `content`, `media_type` and `blob_hash` are `null`). The web UI ignores it
+  for now (`src/lib/types.ts` not updated; WebUI out of scope).
+- Tests: content-less edges (create, supersede both ways, events stamped `3.1`), edge
+  `resource_type`, and a `local_file` `.pdf` node (detected as
+  `application/pdf; profile=pdfa` by indiek 1.1.0; no API change was needed).
+
 ## 0.12.0 — 2026-10-21
 
 ### Changed

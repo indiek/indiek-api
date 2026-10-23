@@ -67,6 +67,7 @@ class EdgeView:
     target: str
     title: str | None
     author: str
+    resource_type: str  # "managed" or "none" (content-less, indiek format 3.1)
     media_type: str | None
     blob_hash: str | None
     tags: tuple[str, ...]
@@ -185,6 +186,7 @@ def _project(archive: Archive, events: list[EventView], aliases: dict[str, str])
             "alias": alias,
             "title": body.get("title"),
             "author": item.author,
+            "resource_type": body.get("resource_type") or "managed",
             "media_type": body.get("media_type"),
             "blob_hash": body.get("blob_hash"),
             "tags": tuple(sorted(str(tag) for tag in item.tags)),
@@ -207,7 +209,6 @@ def _project(archive: Archive, events: list[EventView], aliases: dict[str, str])
             )
         else:
             nodes[item_id] = NodeView(
-                resource_type=body.get("resource_type") or "managed",
                 uri=body.get("uri"),
                 path=body.get("path"),
                 file_size=body.get("file_size"),

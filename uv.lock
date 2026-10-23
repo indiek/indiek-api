@@ -186,7 +186,7 @@ wheels = [
 
 [[package]]
 name = "indiek"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "../public_archive" }
 dependencies = [
     { name = "pydantic" },
@@ -213,7 +213,7 @@ dev = [
 
 [[package]]
 name = "indiek-api"
-version = "0.12.0"
+version = "0.13.0"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },
