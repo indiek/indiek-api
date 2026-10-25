@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from indiek import MediaType, ResourceType
+from indiek import Author, MediaType, ResourceType
 
 from indiek_api import __version__
 from indiek_api.archive_service import (
@@ -29,7 +29,13 @@ from indiek_api.archive_service import (
     NodeView,
     Projection,
 )
-from indiek_api.errors import BlobNotFoundError, ItemNotFoundError, install_handlers
+from indiek_api.errors import (
+    BlobNotFoundError,
+    InvalidKeyError,
+    ItemNotFoundError,
+    install_handlers,
+)
+from indiek_api.identity import KeyProvider
 from indiek_api.schemas import (
     Created,
     EdgeCreate,
@@ -37,6 +43,10 @@ from indiek_api.schemas import (
     EdgeWrite,
     EventOut,
     GraphOut,
+    IdentityBackup,
+    IdentityGenerate,
+    IdentityImport,
+    IdentityOut,
     LocalFileNodeCreate,
     ManagedNodeCreate,
     NodeCreate,
@@ -110,6 +120,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    # -- signing identity (DESKTOP:KEY-ONBOARDING) -------------------------------------
+
+    identity = KeyProvider()
+    app.state.identity = identity
+
+    def identity_out() -> IdentityOut:
+        author, source, available = identity.status()
+        return IdentityOut(
+            public_key=author.public_key_hex if author else None,
+            source=source.value,
+            keychain_available=available,
+        )
+
+    @app.get("/api/identity", response_model=IdentityOut)
+    def get_identity() -> IdentityOut:
+        return identity_out()
+
+    @app.post("/api/identity/generate", response_model=IdentityOut, status_code=201)
+    def generate_identity(payload: IdentityGenerate) -> IdentityOut:
+        identity.store(Author.generate(), replace=payload.replace)
+        return identity_out()
+
+    @app.post("/api/identity/import", response_model=IdentityOut, status_code=201)
+    def import_identity(payload: IdentityImport) -> IdentityOut:
+        if (payload.seed_hex is None) == (payload.backup is None):
+            raise InvalidKeyError("Send either seed_hex or a backup file with its password.")
+        if payload.seed_hex is not None:
+            try:
+                author = Author.from_seed_hex(payload.seed_hex.strip())
+            except ValueError:
+                raise InvalidKeyError(
+                    "The key must be a 32-byte Ed25519 seed written as 64 hex characters."
+                ) from None
+        else:
+            if not payload.password:
+                raise InvalidKeyError("A backup file needs its password.")
+            author = identity.read_backup(payload.backup or "", payload.password)
+        identity.store(author, replace=payload.replace)
+        return identity_out()
+
+    @app.post("/api/identity/backup")
+    def backup_identity(payload: IdentityBackup) -> Response:
+        author, data = identity.backup(payload.password)
+        filename = f"indiek-key-{author.public_key_hex[:8]}.ikkey"
+        return Response(
+            content=data,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",
+            },
+        )
+
     api = APIRouter(prefix="/api/workspaces")
 
     # --- workspaces ----------------------------------------------------------
@@ -120,7 +183,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @api.post("", response_model=WorkspaceOut, status_code=201)
     def register_workspace(payload: WorkspaceCreate, response: Response) -> WorkspaceRecord:
-        author = settings.author_or_none() if payload.create else None
+        author = identity.author_or_none() if payload.create else None
         record, created = registry.register(payload.path, create=payload.create, author=author)
         if not created:
             response.status_code = 200
@@ -162,7 +225,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @api.post("/{workspace_id}/nodes", response_model=Created, status_code=201)
     def create_node(workspace_id: str, payload: NodeCreate) -> Created:
         service = registry.service(workspace_id)
-        author = settings.author()
+        author = identity.author()
         match payload:
             case ManagedNodeCreate():
                 node_id = service.write(
@@ -198,7 +261,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def supersede_node(workspace_id: str, node_id: str, payload: NodeWrite) -> Created:
         service = registry.service(workspace_id)
         revised_id = service.write(
-            settings.author(),
+            identity.author(),
             lambda ik: ik.supersede_node(node_id, payload.content, title=payload.title),
         )
         return _created(service, revised_id, "node")
@@ -207,7 +270,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_edge(workspace_id: str, payload: EdgeCreate) -> Created:
         service = registry.service(workspace_id)
         edge_id = service.write(
-            settings.author(),
+            identity.author(),
             lambda ik: ik.create_edge(payload.source, payload.target, payload.content),
         )
         return _created(service, edge_id, "edge")
@@ -216,7 +279,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def supersede_edge(workspace_id: str, edge_id: str, payload: EdgeWrite) -> Created:
         service = registry.service(workspace_id)
         revised_id = service.write(
-            settings.author(), lambda ik: ik.supersede_edge(edge_id, payload.content)
+            identity.author(), lambda ik: ik.supersede_edge(edge_id, payload.content)
         )
         return _created(service, revised_id, "edge")
 
@@ -224,7 +287,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_tag(workspace_id: str, payload: TagCreate) -> Created:
         service = registry.service(workspace_id)
         tag_id = service.write(
-            settings.author(),
+            identity.author(),
             lambda ik: ik.create_tag(payload.name, payload.description, kind=payload.kind),
         )
         return _created(service, tag_id, "tag")
@@ -234,7 +297,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     def assign_tag(workspace_id: str, tag_id: str, payload: TagAssignment) -> TargetTags:
         service = registry.service(workspace_id)
-        service.write(settings.author(), lambda ik: ik.set_tag(tag_id, payload.target))
+        service.write(identity.author(), lambda ik: ik.set_tag(tag_id, payload.target))
         target = _find_item(service.projection(), payload.target)
         return TargetTags(target=target.id, tags=list(target.tags))
 

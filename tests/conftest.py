@@ -133,3 +133,41 @@ def workspace(client: TestClient, sample_archive: SampleArchive) -> Workspace:
     response = client.post("/api/workspaces", json={"path": str(sample_archive.root)})
     assert response.status_code == 201, response.text
     return Workspace(client, response.json()["workspace_id"], sample_archive)
+
+
+class MemoryKeyring:
+    """In-memory stand-in for the OS keychain (keyring backend protocol)."""
+
+    priority = 1
+
+    def __init__(self) -> None:
+        self.store: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return self.store.get((service, username))
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.store[(service, username)] = password
+
+    def delete_password(self, service: str, username: str) -> None:
+        import keyring.errors
+
+        if self.store.pop((service, username), None) is None:
+            raise keyring.errors.PasswordDeleteError("not found")
+
+
+@pytest.fixture(autouse=True)
+def memory_keyring(monkeypatch: pytest.MonkeyPatch) -> MemoryKeyring:
+    """No test ever touches the developer's real OS keychain."""
+    fake = MemoryKeyring()
+    monkeypatch.setattr("indiek.keys._default_backend", lambda: fake)
+    return fake
+
+
+@pytest.fixture(autouse=True)
+def fast_key_backups(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Minimal Argon2id cost in tests (same code path; the real cost is ≈ 4 s)."""
+    from nacl import pwhash
+
+    monkeypatch.setattr("indiek.keys.BACKUP_OPSLIMIT", pwhash.argon2id.OPSLIMIT_MIN)
+    monkeypatch.setattr("indiek.keys.BACKUP_MEMLIMIT", pwhash.argon2id.MEMLIMIT_MIN)

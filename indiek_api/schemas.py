@@ -170,6 +170,32 @@ class GraphOut(BaseModel):
     tags: list[TagOut]
 
 
+class IdentityOut(BaseModel):
+    """The signing identity; never contains the secret seed."""
+
+    public_key: str | None
+    source: Literal["env", "keychain", "none"]
+    keychain_available: bool
+
+
+class IdentityGenerate(BaseModel):
+    replace: bool = False
+
+
+class IdentityImport(BaseModel):
+    """Exactly one of `seed_hex` or `backup` (+ `password`); checked by the route, so that
+    validation errors never echo a secret back."""
+
+    seed_hex: str | None = None
+    backup: str | None = None
+    password: str | None = None
+    replace: bool = False
+
+
+class IdentityBackup(BaseModel):
+    password: str
+
+
 class Created(BaseModel):
     id: str
     alias: str

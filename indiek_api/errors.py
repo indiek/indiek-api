@@ -108,6 +108,34 @@ class MissingAuthorKeyError(IndieKAPIError):
     status_code, code = 503, "author_key_missing"
 
 
+class KeychainUnavailableAPIError(IndieKAPIError):
+    """No usable OS keychain: the app cannot store a key (IK_AUTHOR_PRIVATE_KEY still works)."""
+
+    status_code, code = 503, "keychain_unavailable"
+
+
+class KeyExistsError(IndieKAPIError):
+    """The OS keychain already holds an author key and replacing it was not requested."""
+
+    status_code, code = 409, "key_exists"
+
+
+class InvalidKeyError(IndieKAPIError):
+    """An imported key (or the import request) is malformed. Never echoes the key."""
+
+    status_code, code = 422, "invalid_key"
+
+
+class InvalidBackupError(IndieKAPIError):
+    """Not a key backup, wrong password, or a damaged/tampered backup file."""
+
+    status_code, code = 422, "invalid_backup"
+
+
+class WeakPasswordError(IndieKAPIError):
+    status_code, code = 422, "weak_password"
+
+
 def translate_library_error(exc: Exception) -> IndieKAPIError:
     """Classify an exception raised by the `indiek` SDK by its type."""
     if isinstance(exc, IndieKAPIError):

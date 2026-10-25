@@ -8,9 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from indiek import Author
 
-from indiek_api.errors import MissingAuthorKeyError
 from indiek_api.security import MIN_FIXED_TOKEN_LENGTH
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -69,21 +67,3 @@ class Settings:
         """Load the dotenv file once; real environment variables take precedence."""
         if self.env_file is not None and self.env_file.is_file():
             load_dotenv(self.env_file, override=False)
-
-    def author_or_none(self) -> Author | None:
-        """The configured author, or ``None`` when ``IK_AUTHOR_PRIVATE_KEY`` is unset."""
-        return self.author() if os.getenv("IK_AUTHOR_PRIVATE_KEY", "").strip() else None
-
-    def author(self) -> Author:
-        """Return the author that signs writes, read fresh from ``IK_AUTHOR_PRIVATE_KEY``."""
-        seed = os.getenv("IK_AUTHOR_PRIVATE_KEY", "").strip()
-        if not seed:
-            raise MissingAuthorKeyError(
-                "Archive writes need IK_AUTHOR_PRIVATE_KEY (64 hex characters) in the API environment."
-            )
-        try:
-            return Author.from_seed_hex(seed)
-        except ValueError as exc:
-            raise MissingAuthorKeyError(
-                "IK_AUTHOR_PRIVATE_KEY must be a 32-byte Ed25519 seed written as 64 hex characters."
-            ) from exc
