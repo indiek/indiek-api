@@ -13,7 +13,13 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from indiek import AuthorshipError, IndieKError, IntegrityError, UnknownItemError
+from indiek import (
+    ArchiveLockedError,
+    AuthorshipError,
+    IndieKError,
+    IntegrityError,
+    UnknownItemError,
+)
 
 
 class IndieKAPIError(Exception):
@@ -55,6 +61,12 @@ class ArchiveIntegrityError(IndieKAPIError):
     """The archive failed verification: broken chain, bad signature or missing blob."""
 
     status_code, code = 409, "archive_integrity"
+
+
+class ArchiveLockedAPIError(IndieKAPIError):
+    """Another process (e.g. the `ik` CLI) kept the archive's write lock too long; retry."""
+
+    status_code, code = 409, "archive_locked"
 
 
 class WorkspaceConflictError(IndieKAPIError):
@@ -103,6 +115,8 @@ def translate_library_error(exc: Exception) -> IndieKAPIError:
     message = str(exc) or type(exc).__name__
     if isinstance(exc, IntegrityError):
         return ArchiveIntegrityError(message)
+    if isinstance(exc, ArchiveLockedError):
+        return ArchiveLockedAPIError(message)
     if isinstance(exc, AuthorshipError):
         return ForbiddenError(message)
     if isinstance(exc, UnknownItemError):

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from indiek import ArchiveRuleError, AuthorshipError, IntegrityError, UnknownItemError
+from indiek import (
+    ArchiveLockedError,
+    ArchiveRuleError,
+    AuthorshipError,
+    IntegrityError,
+    UnknownItemError,
+)
 
 from indiek_api import errors
 
@@ -17,6 +23,7 @@ from indiek_api import errors
         (UnknownItemError("Unknown ID or alias 'e99'"), 404, "item_not_found"),
         (ArchiveRuleError("Tag kind mismatch"), 422, "archive_rule"),
         (ValueError("bad input"), 422, "archive_rule"),
+        (ArchiveLockedError("Archive is being written by another process"), 409, "archive_locked"),
     ],
 )
 def test_library_errors_are_classified_by_type(raised: Exception, status: int, code: str) -> None:

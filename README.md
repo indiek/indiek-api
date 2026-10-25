@@ -169,6 +169,7 @@ Every error is `{"detail": <message>, "code": <stable slug>}`; clients branch on
 | --- | --- | --- |
 | 404 | `workspace_not_found`, `item_not_found`, `blob_not_found`, `archive_not_found` | unknown workspace/id/alias/hash, or the registered folder does not exist |
 | 409 | `archive_integrity` | broken chain, bad signature, missing blob |
+| 409 | `archive_locked` | another process (e.g. `ik`) held the archive's write lock `.ik.lock` for more than 10 s; retry |
 | 403 | `forbidden` | assigning another author's tag |
 | 422 | `archive_rule` | the library refused the operation (e.g. tag kind ≠ target kind) |
 | 422 | *(none)* | FastAPI request validation; `detail` is a list of issues |
@@ -231,6 +232,7 @@ Helpers: `open_index(root)` (open, verify and index an archive exactly as the CL
 | --- | --- |
 | `503 author_key_missing` on writes | Set `IK_AUTHOR_PRIVATE_KEY` (env or `fastAPI/.env`) and restart |
 | `409 archive_integrity` | The archive on disk is inconsistent (e.g. a manual edit or bad merge); check it with the `ik` CLI |
+| `409 archive_locked` | Another process is writing to the archive (a long `ik ingest`/`ik seal`, or a stuck process); retry, or stop it |
 | `404 archive_not_found` when registering | The folder does not exist. Paths are `~`-expanded and resolved relative to the server's working directory, so prefer absolute paths |
 | `Address already in use` | Another server on 8000: stop it or set `INDIEK_API_PORT` |
 | Frontend says `network_error` | Server not running, or frontend's `INDIEK_API_URL` points to another port |

@@ -1,12 +1,12 @@
 [project]
 name = "indiek-api"
-version = "0.13.0"
+version = "0.14.0"
 description = "Local HTTP API serving IndieK archives to the IndieK Desktop App."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.139.0",
-    "indiek",
+    "indiek>=1.2.0",
     "python-dotenv>=1.2.2",
     "uvicorn>=0.51.0",
 ]

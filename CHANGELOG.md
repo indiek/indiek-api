@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.14.0 — 2026-10-25
+
+Follows `indiek` 1.2.0 (SDK2:WRITE-LOCK); now requires `indiek>=1.2.0`.
+
+### Added
+- `409 archive_locked`: the SDK's new `ArchiveLockedError` (another process, e.g. the `ik`
+  CLI, held `<archive>/.ik.lock` for more than 10 s) is mapped by type
+  (`ArchiveLockedAPIError`). It used to fall through to `422 archive_rule`.
+- Writes from the API and from `ik` on the same archive no longer fork the log: the SDK
+  serialises them across processes (the in-process `threading.RLock` only covered the API's
+  own threads). No route or service change was needed.
+- Tests: mapping case in `tests/test_errors.py`; new `tests/test_write_lock.py` (a write
+  while another process holds the lock → 409, archive unchanged, reads still work, next
+  write succeeds). 91 passed.
+
 ## 0.13.0 — 2026-10-22
 
 Follows `indiek` 1.1.0 and the format 3.1. 
