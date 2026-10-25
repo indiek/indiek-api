@@ -5,7 +5,12 @@ Run with ``uv run python -m indiek_api`` (binds 127.0.0.1 only).
 
 from __future__ import annotations
 
+import argparse
 import logging
+import socket
+import webbrowser
+from collections.abc import Sequence
+from dataclasses import replace
 from typing import Literal
 from uuid import UUID
 
@@ -45,6 +50,13 @@ from indiek_api.schemas import (
     WorkspaceCreate,
     WorkspaceOut,
 )
+from indiek_api.security import (
+    SESSION_PATH,
+    AccessControlMiddleware,
+    AccessTokens,
+    build_csp,
+    inline_script_hashes,
+)
 from indiek_api.settings import Settings
 from indiek_api.workspaces import WorkspaceRecord, WorkspaceRegistry
 
@@ -76,6 +88,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="IndieK local API", version=__version__)
     install_handlers(app)
+    access = AccessTokens(fixed=settings.token)
+    app.state.access = access
+    app.add_middleware(
+        AccessControlMiddleware,
+        tokens=access,
+        port=settings.port,
+        csp=build_csp(inline_script_hashes(settings.static_dir)),
+        csp_report_only=settings.csp_report_only,
+    )
+    # Added last = outermost: answers CORS preflights (only for explicitly allowed origins).
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -222,9 +244,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-def main() -> None:
+def bind_loopback(host: str, port: int | None) -> socket.socket:
+    """A listening socket on ``host``; ``port=None`` lets the OS pick a free port."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((host, port or 0))
+        sock.listen(128)
+    except OSError:
+        sock.close()
+        raise
+    return sock
+
+
+def launch_url(host: str, port: int, launch_token: str) -> str:
+    return f"http://{host}:{port}{SESSION_PATH}?token={launch_token}"
+
+
+def _serve(app: FastAPI, sockets: list[socket.socket]) -> None:
     import uvicorn
 
+    uvicorn.Server(uvicorn.Config(app, log_level="info")).run(sockets=sockets)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m indiek_api", description="Serve the IndieK Desktop App on this machine."
+    )
+    parser.add_argument(
+        "--no-browser", action="store_true", help="print the launch URL without opening it"
+    )
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
     settings = Settings.from_env()
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
+    sock = bind_loopback(settings.host, settings.port)
+    try:
+        settings = replace(settings, port=sock.getsockname()[1])
+        app = create_app(settings)
+        launch = app.state.access.launch
+        assert settings.port is not None and launch is not None
+        url = launch_url(settings.host, settings.port, launch)
+        print(f"IndieK Desktop: open {url}", flush=True)
+        if settings.open_browser and not args.no_browser:
+            webbrowser.open(url)
+        _serve(app, [sock])
+    finally:
+        sock.close()

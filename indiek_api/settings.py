@@ -11,19 +11,30 @@ from dotenv import load_dotenv
 from indiek import Author
 
 from indiek_api.errors import MissingAuthorKeyError
+from indiek_api.security import MIN_FIXED_TOKEN_LENGTH
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 # The API signs archive writes with the user's key: never expose it beyond this machine.
 LOOPBACK = "127.0.0.1"
 
 
+def _flag(name: str, *, default: bool) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    return default if not value else value not in {"0", "false", "no", "off"}
+
+
 @dataclass(frozen=True)
 class Settings:
     env_file: Path | None = PROJECT_DIR / ".env"
     registry_path: Path = Path.home() / ".indiek" / "workspaces.json"
-    port: int = 8000
+    # None: a free port chosen by the OS at each launch (owner decision 2026-10-25).
+    port: int | None = None
     static_dir: Path | None = None
     cors_origins: tuple[str, ...] = ()
+    # Fixed API token (INDIEK_API_TOKEN), development and tests only; None: random per launch.
+    token: str | None = None
+    open_browser: bool = True
+    csp_report_only: bool = False
     host: str = field(default=LOOPBACK, init=False)
 
     @classmethod
@@ -36,13 +47,22 @@ class Settings:
             return Path(value).expanduser() if value else default
 
         origins = os.getenv("INDIEK_API_CORS_ORIGINS", "")
+        port = os.getenv("INDIEK_API_PORT", "").strip()
+        token = os.getenv("INDIEK_API_TOKEN", "").strip() or None
+        if token is not None and len(token) < MIN_FIXED_TOKEN_LENGTH:
+            raise ValueError(
+                f"INDIEK_API_TOKEN must be at least {MIN_FIXED_TOKEN_LENGTH} characters long."
+            )
         return cls(
             env_file=path_or("INDIEK_API_ENV_FILE", defaults.env_file),
             registry_path=path_or("INDIEK_API_REGISTRY", defaults.registry_path)
             or defaults.registry_path,
-            port=int(os.getenv("INDIEK_API_PORT", defaults.port)),
+            port=int(port) if port else defaults.port,
             static_dir=path_or("INDIEK_API_STATIC_DIR", defaults.static_dir),
             cors_origins=tuple(o.strip() for o in origins.split(",") if o.strip()),
+            token=token,
+            open_browser=_flag("INDIEK_API_OPEN_BROWSER", default=True),
+            csp_report_only=_flag("INDIEK_API_CSP_REPORT_ONLY", default=False),
         )
 
     def load_env_file(self) -> None:

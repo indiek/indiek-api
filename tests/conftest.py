@@ -19,6 +19,17 @@ from indiek import Archive, Author, MediaType
 
 from indiek_api.settings import Settings
 
+# Fixed API token for tests (INDIEK_API_TOKEN equivalent); not a secret.
+TEST_TOKEN = "test-token-0123456789abcdef"
+# Headers the desktop UI sends: the token (Bearer, as the Tauri shell will) + the write header.
+AUTH_HEADERS = {"Authorization": f"Bearer {TEST_TOKEN}", "X-IndieK-Request": "1"}
+
+
+def api_client(app: object) -> TestClient:
+    """A TestClient that calls the API as the desktop UI does (loopback host, token, write header)."""
+    return TestClient(app, base_url="http://127.0.0.1", headers=AUTH_HEADERS)  # type: ignore[arg-type]
+
+
 # Built with the `ik` CLI by tests/fixtures/build_demo_archive.sh (see its header).
 DEMO_ARCHIVE = Path(__file__).parent / "fixtures" / "demo_archive"
 
@@ -105,14 +116,14 @@ def demo_archive(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    return Settings(env_file=None, registry_path=tmp_path / "workspaces.json")
+    return Settings(env_file=None, registry_path=tmp_path / "workspaces.json", token=TEST_TOKEN)
 
 
 @pytest.fixture
 def client(settings: Settings, author: Author) -> Iterator[TestClient]:
     from indiek_api.app import create_app
 
-    with TestClient(create_app(settings)) as test_client:
+    with api_client(create_app(settings)) as test_client:
         yield test_client
 
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.15.0 — 2026-10-25
+
+Access control for the local API (DESKTOP:LOCALHOST-TOKEN). Design, threats and owner decisions:
+`project_management/Design.md`, cybersecurity section.
+
+### Added
+- `indiek_api/security.py`: `AccessControlMiddleware` (pure ASGI). Loopback `Host` only
+  (`400 invalid_host`); per-launch token on every `/api/*` route, as `Authorization: Bearer` or
+  the HttpOnly SameSite=Strict cookie `ik_session_<port>` (`401 unauthorized`); writes also need
+  `X-IndieK-Request: 1` (`403 missing_request_header`). Tokens compared with `hmac.compare_digest`.
+- `GET /api/session?token=…`: single-use launch token → session cookie, `303 → /`
+  (`Cache-Control: no-store`, `Referrer-Policy: no-referrer`).
+- Strict `Content-Security-Policy` on every response, `script-src 'self'` + the SHA-256 of each
+  inline script of the static UI computed at startup (11 in today's build); sandboxed policy for
+  blobs; `X-Content-Type-Options: nosniff`. `INDIEK_API_CSP_REPORT_ONLY=1` for debugging.
+- Launcher: `python -m indiek_api` binds a random free port, prints the launch URL and opens it
+  in the default browser; `--no-browser` / `INDIEK_API_OPEN_BROWSER=0` disable the auto-open.
+- `INDIEK_API_TOKEN`: fixed, reusable token for development and tests (≥ 16 characters).
+- Tests: `tests/test_security.py` (26, incl. a check of the real `next build` output when
+  present); the shared client now authenticates like the UI (`api_client()`, `TEST_TOKEN`). 117 passed.
+
+### Changed
+- Default port: random (was 8000); `INDIEK_API_PORT` still fixes it.
+- **Breaking for other clients**: every `/api/*` call needs the token; writes need the header.
+
 ## 0.14.0 — 2026-10-25
 
 Follows `indiek` 1.2.0 (SDK2:WRITE-LOCK); now requires `indiek>=1.2.0`.

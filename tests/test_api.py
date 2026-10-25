@@ -12,7 +12,7 @@ from indiek import Author
 
 from indiek_api.settings import Settings
 
-from conftest import SampleArchive, Workspace, open_archive, tamper_last_signature
+from conftest import SampleArchive, Workspace, api_client, open_archive, tamper_last_signature
 
 
 def _graph(ws: Workspace) -> dict:
@@ -174,7 +174,7 @@ def test_create_archive_without_an_author_key(
 def test_workspaces_survive_a_restart(workspace: Workspace, settings: Settings) -> None:
     from indiek_api.app import create_app
 
-    with TestClient(create_app(settings)) as restarted:
+    with api_client(create_app(settings)) as restarted:
         listed = restarted.get("/api/workspaces").json()
     assert [item["workspace_id"] for item in listed] == [workspace.workspace_id]
 

@@ -44,7 +44,7 @@ Dependency changes: `uv add <pkg>` / `uv add --dev <pkg>` / `uv remove <pkg>` (u
 
 | Command                                      | What it does                                                                                     |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `uv run python -m indiek_api`                | Run the server on http://127.0.0.1:8000 (interactive docs at `/docs`, schema at `/openapi.json`) |
+| `uv run python -m indiek_api`                | Run the server on 127.0.0.1, random port; prints the one-time launch URL and opens it in the browser (`--no-browser` to only print it). Docs at `/docs`, schema at `/openapi.json` |
 | `uv run pytest`                              | Full test suite                                                                                  |
 | `uv run pytest tests/test_api.py`            | One file                                                                                         |
 | `uv run pytest tests/test_api.py::test_name` | One test                                                                                         |
@@ -59,6 +59,10 @@ To launch the UI with NextJS already built:
 export INDIEK_API_ENV_FILE=".env" && INDIEK_API_STATIC_DIR="/Users/adrianradillo/prog/indiek/webUI/custom-graph-explorer/out" && uv run python -m indiek_api
 ```
 
+The server prints `IndieK Desktop: open http://127.0.0.1:<port>/api/session?token=…` and opens
+it: that single-use link logs the browser in (section 7, "Access control"). Restarting the server
+invalidates the session: use the new link.
+
 The server does not auto-reload: restart it after code changes.
 
 ---
@@ -72,7 +76,10 @@ All settings are environment variables, read in `indiek_api/settings.py`.
 | `IK_AUTHOR_PRIVATE_KEY` | — | 64-hex Ed25519 seed that signs writes (same variable as the `ik` CLI, see `public_archive/README.md`). Reads work without it; writes return `503 author_key_missing`. |
 | `INDIEK_API_ENV_FILE` | `fastAPI/.env` | Dotenv file loaded at startup; real environment variables win. |
 | `INDIEK_API_REGISTRY` | `~/.indiek/workspaces.json` | Registered archive folders (JSON). |
-| `INDIEK_API_PORT` | `8000` | Port (host is always `127.0.0.1`). |
+| `INDIEK_API_PORT` | random free port | Fixed port (host is always `127.0.0.1`). |
+| `INDIEK_API_TOKEN` | random per launch | Fixed API token, **development and tests only** (≥ 16 characters); stays reusable, so `…/api/session?token=<it>` can be reopened. |
+| `INDIEK_API_OPEN_BROWSER` | `1` | `0` = only print the launch URL (same as `--no-browser`). |
+| `INDIEK_API_CSP_REPORT_ONLY` | `0` | `1` = send the CSP as `Content-Security-Policy-Report-Only` (debugging: violations are logged in the browser console, nothing is blocked). |
 | `INDIEK_API_STATIC_DIR` | — | Built web UI to serve at `/` (see section 5). |
 | `INDIEK_API_CORS_ORIGINS` | — | Comma-separated origins; only needed when a browser calls the API from another origin. |
 
@@ -81,15 +88,19 @@ Typical setups:
 - **Your key**: put `IK_AUTHOR_PRIVATE_KEY=…` in `fastAPI/.env` (git-ignored; never commit it).
 - **Experiments without touching your real registry**:
   `INDIEK_API_REGISTRY=/tmp/ik-registry.json INDIEK_API_PORT=8765 uv run python -m indiek_api`.
+- **Browser testing with a stable URL**: add `INDIEK_API_PORT=8765 INDIEK_API_TOKEN=<16+ chars>`
+  and open `http://127.0.0.1:8765/api/session?token=<the token>` once per browser.
 
 ---
 
 ## 5. Working with the frontend
 
 - **Frontend development**: run this server as usual and `npm run dev` in
-  `webUI/custom-graph-explorer`. Next proxies `/api/*` to `127.0.0.1:8000`, so the browser
-  sees one origin — **no CORS setting needed**. If you change the port, start the frontend with
-  `INDIEK_API_URL=http://127.0.0.1:<port> npm run dev`.
+  `webUI/custom-graph-explorer`. Next proxies `/api/*` to `INDIEK_API_URL`
+  (default `http://127.0.0.1:8000`), so the browser sees one origin — **no CORS setting
+  needed**. Start this server with `INDIEK_API_PORT=8000 INDIEK_API_TOKEN=<16+ chars>`, then
+  open `http://localhost:3000/api/session?token=<the token>` once: the cookie lands on
+  `localhost:3000` and the proxy forwards it.
 - **Desktop build (one process)**: build the UI, then point this server at it:
   ```bash
   (cd ../webUI/custom-graph-explorer && npm run build)
@@ -107,7 +118,8 @@ Typical setups:
 ```
 indiek_api/
   __main__.py          entry point: `python -m indiek_api` → uvicorn on 127.0.0.1:<port>
-  app.py               FastAPI app factory, all routes, static-files mount, CORS
+  app.py               FastAPI app factory, all routes, static-files mount, CORS; main() = launcher
+  security.py          access control: loopback Host, token (Bearer/cookie), write header, CSP
   schemas.py           Pydantic request/response models (the wire contract)
   archive_service.py   ArchiveService: verified, cached, write-serialised access to ONE archive
   workspaces.py        registry of archive folders (workspace = pointer to a folder)
@@ -118,6 +130,8 @@ tests/
   test_api.py          HTTP contract of every route
   test_archive_service.py   projection, caching, integrity, write serialisation
   test_cli_parity.py   results match the `ik` CLI (resource types, edge supersedes, timestamps, events)
+  test_security.py     access control, launch link, CSP, launcher
+  test_write_lock.py   indiek's cross-process write lock seen through the API
   fixtures/demo_archive/    a real archive built with the `ik` CLI README walkthrough
 CHANGELOG.md, pyproject.toml, uv.lock, .python-version
 ```
@@ -143,11 +157,29 @@ JSON by the exception handlers.
 
 All archive routes live under `/api/workspaces/{workspace_id}`. Item references
 accept a UUID or an `e{n}` alias; tag references a UUID or an `m{n}` alias.
-Full request/response schemas: http://127.0.0.1:8000/docs.
+Full request/response schemas: `http://127.0.0.1:<port>/docs`.
+
+### Access control (DESKTOP:LOCALHOST-TOKEN)
+
+Design, threats and owner decisions: `project_management/Design.md`, cybersecurity section.
+
+- Only loopback `Host` headers are served (`127.0.0.1`, `localhost`, `[::1]`, any port):
+  defeats DNS rebinding. Applies to every path.
+- Every `/api/*` route needs the per-launch token: `Authorization: Bearer <token>` (for the
+  future Tauri shell) or the session cookie `ik_session_<port>` (HttpOnly, SameSite=Strict).
+  `GET /api/session?token=<launch token>` sets that cookie and redirects to `/`; the launch
+  token works **once** (unless fixed with `INDIEK_API_TOKEN`). `/health` and the UI files are open.
+- `POST`/`PUT`/`PATCH`/`DELETE` on `/api/*` also need `X-IndieK-Request: 1`: a cross-origin page
+  would need a CORS preflight, which is never granted, so other pages cannot write.
+- Every response carries a strict `Content-Security-Policy`: `script-src` lists the SHA-256 of
+  each inline script of `INDIEK_API_STATIC_DIR`'s HTML, computed at startup (**restart after
+  `npm run build`**); no `'unsafe-inline'`/`'unsafe-eval'` for scripts. Blob responses get a
+  sandboxed policy (`default-src 'none'; …; sandbox`), plus `X-Content-Type-Options: nosniff`.
 
 | Method & path | Body | Response |
 | --- | --- | --- |
-| `GET /health` | — | `{"status": "ok"}` |
+| `GET /health` | — | `{"status": "ok"}` (no token needed) |
+| `GET /api/session?token=…` | — | `303 → /` + session cookie; `401` if the launch token is wrong or used |
 | `GET /api/workspaces` | — | `[{workspace_id, name, path, created_at}]` |
 | `POST /api/workspaces` | `{path}` | `201` new / `200` already registered, same shape |
 | `DELETE /api/workspaces/{id}` | — | `204`; forgets the folder, files are never touched |
@@ -174,6 +206,9 @@ Every error is `{"detail": <message>, "code": <stable slug>}`; clients branch on
 | 422 | `archive_rule` | the library refused the operation (e.g. tag kind ≠ target kind) |
 | 422 | *(none)* | FastAPI request validation; `detail` is a list of issues |
 | 503 | `author_key_missing` | a write without `IK_AUTHOR_PRIVATE_KEY` |
+| 400 | `invalid_host` | `Host` header is not a loopback name |
+| 401 | `unauthorized` | `/api/*` without a valid token (Bearer or session cookie), or a wrong/used launch link |
+| 403 | `missing_request_header` | a write without `X-IndieK-Request: 1` |
 
 ---
 
@@ -208,7 +243,7 @@ Main fixtures in `tests/conftest.py`:
 | `other_author` | a second author (e.g. for `403 forbidden` cases) |
 | `sample_archive` | throwaway archive under `tmp_path`: two nodes, one edge, one node tag, one assignment |
 | `demo_archive` | private, mutable copy of `tests/fixtures/demo_archive` (e1–e10, m1–m6; e1 node and e8 edge superseded; e5 uri, e6 local_file; m1 node tag "theorem", m2 edge tag "proof") |
-| `settings`, `client` | test settings and an HTTP test client for the app |
+| `settings`, `client` | test settings (fixed token `TEST_TOKEN`) and an HTTP test client that calls the API as the UI does (`127.0.0.1`, Bearer token, write header; see `api_client()`) |
 | `workspace` | `sample_archive` registered in place as a workspace |
 
 Helpers: `open_index(root)` (open, verify and index an archive exactly as the CLI does),
@@ -221,7 +256,8 @@ Helpers: `open_index(root)` (open, verify and index an archive exactly as the CL
 - Python 3.10+ style with strict type hints everywhere; PEP 8 via ruff (line length 100).
 - `uv` only.
 - Keep routes thin; logic lives in `ArchiveService`; every error has a stable `code`.
-- Never bind to anything but `127.0.0.1`; never log or return secrets.
+- Never bind to anything but `127.0.0.1`; never log or return secrets (the launch URL printed at
+  startup is the one deliberate exception: it is single-use).
 - Record significant changes in `CHANGELOG.md`.
 
 ---
@@ -234,6 +270,9 @@ Helpers: `open_index(root)` (open, verify and index an archive exactly as the CL
 | `409 archive_integrity` | The archive on disk is inconsistent (e.g. a manual edit or bad merge); check it with the `ik` CLI |
 | `409 archive_locked` | Another process is writing to the archive (a long `ik ingest`/`ik seal`, or a stuck process); retry, or stop it |
 | `404 archive_not_found` when registering | The folder does not exist. Paths are `~`-expanded and resolved relative to the server's working directory, so prefer absolute paths |
-| `Address already in use` | Another server on 8000: stop it or set `INDIEK_API_PORT` |
+| `Address already in use` | Another server on the fixed `INDIEK_API_PORT`: stop it, or unset the variable (random port) |
+| `401 unauthorized` everywhere | Open the launch link the server printed (each restart prints a new one; a link works once) |
+| `403 missing_request_header` | A client other than the UI: send `X-IndieK-Request: 1` on writes |
+| UI blank, CSP errors in the browser console | The UI was rebuilt after the server started: restart it (hashes are computed at startup); `INDIEK_API_CSP_REPORT_ONLY=1` to debug |
 | Frontend says `network_error` | Server not running, or frontend's `INDIEK_API_URL` points to another port |
 | `uv sync` cannot find `indiek` | `../public_archive` is missing or moved (section 1) |
