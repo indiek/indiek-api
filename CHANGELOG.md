@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- README: "Support IndieK" section with GitHub Sponsors (`indiek` org) and Ko-fi (`indiek_sponsoring`) links (FOSSDOCS:DONATION-INSTRUCTIONS).
+
 ## 0.16.0 — 2026-10-25
 
 Signing identity for the desktop app (DESKTOP:KEY-ONBOARDING); requires `indiek[keychain]>=1.3.0`.

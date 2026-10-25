@@ -288,3 +288,15 @@ Helpers: `open_index(root)` (open, verify and index an archive exactly as the CL
 | UI blank, CSP errors in the browser console | The UI was rebuilt after the server started: restart it (hashes are computed at startup); `INDIEK_API_CSP_REPORT_ONLY=1` to debug |
 | Frontend says `network_error` | Server not running, or frontend's `INDIEK_API_URL` points to another port |
 | `uv sync` cannot find `indiek` | `../public_archive` is missing or moved (section 1) |
+
+## 12. Support IndieK
+
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub_Sponsors-indiek-bf3989?logo=githubsponsors)](https://github.com/sponsors/indiek)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=ko-fi)](https://ko-fi.com/indiek_sponsoring)
+
+IndieK is free and open-source software. If it's useful to you, you can support its development:
+
+- [GitHub Sponsors](https://github.com/sponsors/indiek), for developers with a GitHub account (0% platform fees)
+- [Ko-fi](https://ko-fi.com/indiek_sponsoring), one-time or monthly, no account needed
+
+All donations strictly fund the open-source core of IndieK and its public infrastructure.
