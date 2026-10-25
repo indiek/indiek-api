@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.16.0 — 2026-10-25
+
+Signing identity for the desktop app (DESKTOP:KEY-ONBOARDING); requires `indiek[keychain]>=1.3.0`.
+
+### Added
+- `indiek_api/identity.py`: `KeyProvider`, the API's signing seam (DESKTOP:REUSE-SEAMS):
+  `IK_AUTHOR_PRIVATE_KEY` (re-read on every call) wins, else the OS-keychain key via
+  `indiek.keys`, read once and cached (no keychain prompt per write), refreshed after every
+  identity change. All write routes sign through it.
+- Routes: `GET /api/identity`, `POST /api/identity/generate`, `POST /api/identity/import`
+  (`seed_hex` or encrypted `backup` + `password`), `POST /api/identity/backup` (encrypted file
+  download, `Cache-Control: no-store`). The plaintext seed is never returned; the "exactly one
+  source" check lives in the route so validation errors never echo a secret.
+- Error codes: `409 key_exists`, `422 invalid_key`, `422 invalid_backup`, `422 weak_password`,
+  `503 keychain_unavailable`.
+- Tests: `tests/test_identity.py` (13); autouse in-memory keychain + minimal Argon2id cost in
+  `conftest.py`. 130 passed.
+
+### Changed
+- `Settings.author()` / `author_or_none()` removed (replaced by `KeyProvider`).
+- `503 author_key_missing` message now points to the app's Author key dialog.
+
 ## 0.15.0 — 2026-10-25
 
 Access control for the local API (DESKTOP:LOCALHOST-TOKEN). Design, threats and owner decisions:

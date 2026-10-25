@@ -1,6 +1,6 @@
 [project]
 name = "indiek-api"
-version = "0.15.0"
+version = "0.16.0"
 description = "Local HTTP API serving IndieK archives to the IndieK Desktop App."
 readme = "README.md"
 requires-python = ">=3.14"

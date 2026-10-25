@@ -73,7 +73,7 @@ All settings are environment variables, read in `indiek_api/settings.py`.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `IK_AUTHOR_PRIVATE_KEY` | — | 64-hex Ed25519 seed that signs writes (same variable as the `ik` CLI, see `public_archive/README.md`). Reads work without it; writes return `503 author_key_missing`. |
+| `IK_AUTHOR_PRIVATE_KEY` | — | 64-hex Ed25519 seed that signs writes (same variable as the `ik` CLI, see `public_archive/README.md`). **Overrides the OS-keychain key** created or imported in the app (`/api/identity`). Without either, reads work and writes return `503 author_key_missing`. |
 | `INDIEK_API_ENV_FILE` | `fastAPI/.env` | Dotenv file loaded at startup; real environment variables win. |
 | `INDIEK_API_REGISTRY` | `~/.indiek/workspaces.json` | Registered archive folders (JSON). |
 | `INDIEK_API_PORT` | random free port | Fixed port (host is always `127.0.0.1`). |
@@ -120,6 +120,7 @@ indiek_api/
   __main__.py          entry point: `python -m indiek_api` → uvicorn on 127.0.0.1:<port>
   app.py               FastAPI app factory, all routes, static-files mount, CORS; main() = launcher
   security.py          access control: loopback Host, token (Bearer/cookie), write header, CSP
+  identity.py          KeyProvider: the signing seam (env key, else OS-keychain key via indiek.keys)
   schemas.py           Pydantic request/response models (the wire contract)
   archive_service.py   ArchiveService: verified, cached, write-serialised access to ONE archive
   workspaces.py        registry of archive folders (workspace = pointer to a folder)
@@ -131,6 +132,7 @@ tests/
   test_archive_service.py   projection, caching, integrity, write serialisation
   test_cli_parity.py   results match the `ik` CLI (resource types, edge supersedes, timestamps, events)
   test_security.py     access control, launch link, CSP, launcher
+  test_identity.py     signing identity routes (in-memory keychain, never the real one)
   test_write_lock.py   indiek's cross-process write lock seen through the API
   fixtures/demo_archive/    a real archive built with the `ik` CLI README walkthrough
 CHANGELOG.md, pyproject.toml, uv.lock, .python-version
@@ -180,6 +182,10 @@ Design, threats and owner decisions: `project_management/Design.md`, cybersecuri
 | --- | --- | --- |
 | `GET /health` | — | `{"status": "ok"}` (no token needed) |
 | `GET /api/session?token=…` | — | `303 → /` + session cookie; `401` if the launch token is wrong or used |
+| `GET /api/identity` | — | `{public_key, source: "env" \| "keychain" \| "none", keychain_available}` — never the secret |
+| `POST /api/identity/generate` | `{replace?: false}` | `201`, same shape; new key stored in the OS keychain |
+| `POST /api/identity/import` | `{seed_hex}` \| `{backup, password}`, plus `replace?` | `201`, same shape |
+| `POST /api/identity/backup` | `{password}` (≥ 12 characters) | the **encrypted** backup file, `attachment; filename="indiek-key-<8 hex>.ikkey"`, `no-store` (≈ 4 s: Argon2id) |
 | `GET /api/workspaces` | — | `[{workspace_id, name, path, created_at}]` |
 | `POST /api/workspaces` | `{path}` | `201` new / `200` already registered, same shape |
 | `DELETE /api/workspaces/{id}` | — | `204`; forgets the folder, files are never touched |
@@ -209,6 +215,11 @@ Every error is `{"detail": <message>, "code": <stable slug>}`; clients branch on
 | 400 | `invalid_host` | `Host` header is not a loopback name |
 | 401 | `unauthorized` | `/api/*` without a valid token (Bearer or session cookie), or a wrong/used launch link |
 | 403 | `missing_request_header` | a write without `X-IndieK-Request: 1` |
+| 409 | `key_exists` | generate/import while the keychain already holds a key, without `replace: true` |
+| 422 | `invalid_key` | malformed `seed_hex`, or not exactly one of `seed_hex` / `backup` (never echoes the key) |
+| 422 | `invalid_backup` | not a key backup, wrong password, or a damaged file |
+| 422 | `weak_password` | backup password shorter than 12 characters |
+| 503 | `keychain_unavailable` | no usable OS keychain: use `IK_AUTHOR_PRIVATE_KEY` |
 
 ---
 
@@ -266,7 +277,8 @@ Helpers: `open_index(root)` (open, verify and index an archive exactly as the CL
 
 | Symptom | Fix |
 | --- | --- |
-| `503 author_key_missing` on writes | Set `IK_AUTHOR_PRIVATE_KEY` (env or `fastAPI/.env`) and restart |
+| `503 author_key_missing` on writes | Create or import a key in the app (Author key dialog), or set `IK_AUTHOR_PRIVATE_KEY` (env or `fastAPI/.env`) and restart |
+| The app shows `source: env` and ignores a key created in it | `IK_AUTHOR_PRIVATE_KEY` is set (env or `fastAPI/.env`) and wins: remove it to use the keychain key |
 | `409 archive_integrity` | The archive on disk is inconsistent (e.g. a manual edit or bad merge); check it with the `ik` CLI |
 | `409 archive_locked` | Another process is writing to the archive (a long `ik ingest`/`ik seal`, or a stuck process); retry, or stop it |
 | `404 archive_not_found` when registering | The folder does not exist. Paths are `~`-expanded and resolved relative to the server's working directory, so prefer absolute paths |
