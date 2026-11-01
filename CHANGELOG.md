@@ -2,7 +2,37 @@
 
 ## Unreleased
 
+Standalone repository, ready for PyPI as `indiek-api` (DESKTOP:REPO-SPLIT-1). No version bump yet:
+the owner releases `indiek-api` **1.0.0** on PyPI together with the first packaged desktop app.
+
+## 0.17.0 — 2026-11-01
+
+### Changed
+- `indiek` now comes from PyPI (`indiek[keychain]>=1.3.0`, pinned in `uv.lock`) instead of the
+  sibling `../public_archive` path source, so a fresh clone of this repo installs on its own.
+  Unreleased library work: `uv run --with-editable ../public_archive …` (README section 1).
+- README: links to the `indiek` library point to PyPI instead of workspace-relative paths.
+
 ### Added
+- Desktop shell seams (DESKTOP:REPO-SPLIT-3, owner decisions 2026-10-30; the Tauri webview opens
+  the UI served here, so the frontend needs no change):
+  - `--handshake`: one JSON line `{"indiek_api", "port", "launch_url"}` on stdout, no browser;
+    all logs, including uvicorn's access log, go to stderr.
+  - `--exit-on-stdin-eof`: the server stops when its parent closes stdin.
+  - `GET /health` also returns `api_version`.
+- Reuse seams (DESKTOP:REUSE-SEAMS): new `indiek_api/providers.py` with the `WorkspaceProvider`,
+  `Signer` and `KeyManager` protocols; `create_app(settings, *, workspaces=None, signer=None)`.
+  Defaults unchanged (`WorkspaceRegistry`, `KeyProvider`). The `/api/identity/*` routes are
+  mounted only when the signer is a `KeyManager` (moved into `_add_identity_routes`).
+- Tests: `tests/test_desktop_seams.py` (7, one runs the real server as a subprocess).
+  Suite: 138 passed.
+- Packaging metadata in `pyproject.toml`: hatchling build backend, Apache-2.0 license + `LICENSE`
+  file, classifiers, project URLs (stub `github.com/indiek/fastAPI`, not on GitHub yet), console
+  script `indiek-api` (same as `python -m indiek_api`). The sdist uses an explicit allow-list so
+  local files such as `.env*` are never shipped.
+- CI: `.github/workflows/checks.yml` (ruff + pytest on every push and pull request) and
+  `.github/workflows/release-and-publish.yml` (on a version tag pushed by the owner: lint, test,
+  `uv build`, GitHub Release, PyPI trusted publishing).
 - README: "Support IndieK" section with GitHub Sponsors (`indiek` org) and Ko-fi (`indiek_sponsoring`) links (FOSSDOCS:DONATION-INSTRUCTIONS).
 
 ## 0.16.0 — 2026-10-25

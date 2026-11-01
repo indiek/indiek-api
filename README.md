@@ -2,13 +2,12 @@
 
 The HTTP backend of the IndieK Desktop App (FOSS). It opens local archive folders
 (typically git repositories) **in place**, verifies them with the
-[`indiek`](../public_archive/README.md) library, and exposes their current state
-and the archive write operations to the web UI in
-[`../webUI/custom-graph-explorer`](../webUI/custom-graph-explorer/README.md).
+[`indiek`](https://pypi.org/project/indiek/) library, and exposes their current state
+and the archive write operations to the IndieK web UI (`custom-graph-explorer`).
 
 ```
 web UI (browser) ──HTTP──► indiek_api (this repo, 127.0.0.1 only) ──► indiek library ──► archive folder on disk
-                                                                       (../public_archive)   (git repo, edited in place)
+                                                                       (PyPI: indiek)        (git repo, edited in place)
 ```
 
 The server always binds to `127.0.0.1`: it signs archive writes with your key,
@@ -22,7 +21,7 @@ so it must never be reachable from the network.
 | --- | --- |
 | Python ≥ 3.14 | pinned in `.python-version`; `uv` installs it if missing |
 | [`uv`](https://docs.astral.sh/uv/) | the **only** supported package/venv manager (no pip, no poetry) |
-| `../public_archive` | the `indiek` library is installed from this sibling folder as an **editable** path dependency (`[tool.uv.sources]` in `pyproject.toml`). Keep the `indiek/` workspace layout: `fastAPI/` and `public_archive/` side by side. Library changes are picked up without reinstalling. |
+| [`indiek`](https://pypi.org/project/indiek/) | installed from PyPI (version pinned in `uv.lock`); nothing else to check out. To run against an **unreleased** local checkout of the library, overlay it per command without touching `pyproject.toml`: `uv run --with-editable ../public_archive pytest` (any path to the `indiek` source works). |
 
 `fastAPI/` is its own git repository.
 
@@ -73,7 +72,7 @@ All settings are environment variables, read in `indiek_api/settings.py`.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `IK_AUTHOR_PRIVATE_KEY` | — | 64-hex Ed25519 seed that signs writes (same variable as the `ik` CLI, see `public_archive/README.md`). **Overrides the OS-keychain key** created or imported in the app (`/api/identity`). Without either, reads work and writes return `503 author_key_missing`. |
+| `IK_AUTHOR_PRIVATE_KEY` | — | 64-hex Ed25519 seed that signs writes (same variable as the `ik` CLI, see the [`indiek` README](https://pypi.org/project/indiek/)). **Overrides the OS-keychain key** created or imported in the app (`/api/identity`). Without either, reads work and writes return `503 author_key_missing`. |
 | `INDIEK_API_ENV_FILE` | `fastAPI/.env` | Dotenv file loaded at startup; real environment variables win. |
 | `INDIEK_API_REGISTRY` | `~/.indiek/workspaces.json` | Registered archive folders (JSON). |
 | `INDIEK_API_PORT` | random free port | Fixed port (host is always `127.0.0.1`). |
@@ -90,6 +89,25 @@ Typical setups:
   `INDIEK_API_REGISTRY=/tmp/ik-registry.json INDIEK_API_PORT=8765 uv run python -m indiek_api`.
 - **Browser testing with a stable URL**: add `INDIEK_API_PORT=8765 INDIEK_API_TOKEN=<16+ chars>`
   and open `http://127.0.0.1:8765/api/session?token=<the token>` once per browser.
+
+### Launched by the desktop shell (DESKTOP:REPO-SPLIT-3)
+
+The Tauri shell starts the server as a child process with two flags (both usable without Tauri):
+
+| Flag | Effect |
+| --- | --- |
+| `--handshake` | Print exactly one JSON line on stdout, `{"indiek_api": "<version>", "port": <port>, "launch_url": "<url>"}`, and never open a browser. All logs (uvicorn's access log included) go to stderr, so the one-time launch token travels only through the pipe to the parent. The shell opens `launch_url` in its webview. |
+| `--exit-on-stdin-eof` | Shut down when stdin is closed: the server never outlives a crashed parent. |
+
+Try it: `uv run python -m indiek_api --handshake --exit-on-stdin-eof` (Ctrl-D stops it).
+
+### Embedding the API as a library (DESKTOP:REUSE-SEAMS)
+
+`create_app(settings=None, *, workspaces=None, signer=None)` accepts any object matching the
+protocols of `indiek_api/providers.py`: `WorkspaceProvider` (`list`, `register`, `remove`,
+`service`; default `WorkspaceRegistry`) and `Signer` (`author`, `author_or_none`; default
+`KeyProvider`). The `/api/identity/*` routes are mounted only when the signer is also a
+`KeyManager` (`status`, `store`, `backup`, `read_backup`), as `KeyProvider` is.
 
 ---
 
@@ -120,7 +138,8 @@ indiek_api/
   __main__.py          entry point: `python -m indiek_api` → uvicorn on 127.0.0.1:<port>
   app.py               FastAPI app factory, all routes, static-files mount, CORS; main() = launcher
   security.py          access control: loopback Host, token (Bearer/cookie), write header, CSP
-  identity.py          KeyProvider: the signing seam (env key, else OS-keychain key via indiek.keys)
+  identity.py          KeyProvider: the default signer (env key, else OS-keychain key via indiek.keys)
+  providers.py         reuse seams: WorkspaceProvider, Signer, KeyManager protocols for create_app
   schemas.py           Pydantic request/response models (the wire contract)
   archive_service.py   ArchiveService: verified, cached, write-serialised access to ONE archive
   workspaces.py        registry of archive folders (workspace = pointer to a folder)
@@ -134,6 +153,7 @@ tests/
   test_security.py     access control, launch link, CSP, launcher
   test_identity.py     signing identity routes (in-memory keychain, never the real one)
   test_write_lock.py   indiek's cross-process write lock seen through the API
+  test_desktop_seams.py  injected providers, --handshake, --exit-on-stdin-eof (real subprocess)
   fixtures/demo_archive/    a real archive built with the `ik` CLI README walkthrough
 CHANGELOG.md, pyproject.toml, uv.lock, .python-version
 ```
@@ -180,7 +200,7 @@ Design, threats and owner decisions: `project_management/Design.md`, cybersecuri
 
 | Method & path | Body | Response |
 | --- | --- | --- |
-| `GET /health` | — | `{"status": "ok"}` (no token needed) |
+| `GET /health` | — | `{"status": "ok", "api_version": "<version>"}` (no token needed) |
 | `GET /api/session?token=…` | — | `303 → /` + session cookie; `401` if the launch token is wrong or used |
 | `GET /api/identity` | — | `{public_key, source: "env" \| "keychain" \| "none", keychain_available}` — never the secret |
 | `POST /api/identity/generate` | `{replace?: false}` | `201`, same shape; new key stored in the OS keychain |
@@ -237,7 +257,7 @@ Every error is `{"detail": <message>, "code": <stable slug>}`; clients branch on
 7. **Docs**: this README's route table and `CHANGELOG.md`; bump `version` in `pyproject.toml`
    for releases.
 
-For the library side (`indiek`), learn the API from `public_archive/README.md`; treat the CLI
+For the library side (`indiek`), learn the API from the [`indiek` README](https://pypi.org/project/indiek/); treat the CLI
 as stable.
 
 ---
@@ -287,7 +307,7 @@ Helpers: `open_index(root)` (open, verify and index an archive exactly as the CL
 | `403 missing_request_header` | A client other than the UI: send `X-IndieK-Request: 1` on writes |
 | UI blank, CSP errors in the browser console | The UI was rebuilt after the server started: restart it (hashes are computed at startup); `INDIEK_API_CSP_REPORT_ONLY=1` to debug |
 | Frontend says `network_error` | Server not running, or frontend's `INDIEK_API_URL` points to another port |
-| `uv sync` cannot find `indiek` | `../public_archive` is missing or moved (section 1) |
+| `uv sync` cannot find `indiek` | No network access to PyPI, or `uv.lock` pins an `indiek` version not published yet (section 1) |
 
 ## 12. Support IndieK
 

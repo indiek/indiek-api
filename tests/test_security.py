@@ -249,7 +249,7 @@ def test_main_binds_a_random_port_prints_and_opens_the_launch_url(
     served: dict[str, object] = {}
     opened: list[str] = []
 
-    def fake_serve(app: object, sockets: list) -> None:
+    def fake_serve(app: object, sockets: list, **_: bool) -> None:
         served["port"] = sockets[0].getsockname()[1]
         served["app"] = app
 
@@ -269,7 +269,7 @@ def test_main_no_browser(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     monkeypatch.setenv("INDIEK_API_REGISTRY", str(tmp_path / "workspaces.json"))
     monkeypatch.setenv("INDIEK_API_ENV_FILE", str(tmp_path / "absent.env"))
     opened: list[str] = []
-    monkeypatch.setattr(app_module, "_serve", lambda app, sockets: None)
+    monkeypatch.setattr(app_module, "_serve", lambda app, sockets, **_: None)
     monkeypatch.setattr(app_module.webbrowser, "open", opened.append)
     app_module.main(["--no-browser"])
     assert opened == []

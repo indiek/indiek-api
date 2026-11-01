@@ -6,12 +6,15 @@ Run with ``uv run python -m indiek_api`` (binds 127.0.0.1 only).
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import socket
+import sys
+import threading
 import webbrowser
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Literal
+from typing import TYPE_CHECKING, BinaryIO, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, FastAPI, Response
@@ -36,6 +39,7 @@ from indiek_api.errors import (
     install_handlers,
 )
 from indiek_api.identity import KeyProvider
+from indiek_api.providers import KeyManager, Signer, WorkspaceProvider
 from indiek_api.schemas import (
     Created,
     EdgeCreate,
@@ -70,6 +74,9 @@ from indiek_api.security import (
 from indiek_api.settings import Settings
 from indiek_api.workspaces import WorkspaceRecord, WorkspaceRegistry
 
+if TYPE_CHECKING:
+    import uvicorn
+
 
 def _created(
     service: ArchiveService, item_id: UUID, kind: Literal["node", "edge", "tag"]
@@ -91,10 +98,17 @@ def _find_item(projection: Projection, ref: str) -> NodeView | EdgeView:
     raise ItemNotFoundError(f"'{ref}' is not a node or edge of this archive")
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    workspaces: WorkspaceProvider | None = None,
+    signer: Signer | None = None,
+) -> FastAPI:
+    """Build the API. ``workspaces`` and ``signer`` default to local folders
+    (`WorkspaceRegistry`) and `KeyProvider`; see `indiek_api.providers`."""
     settings = settings or Settings.from_env()
     settings.load_env_file()
-    registry = WorkspaceRegistry(settings.registry_path)
+    registry = workspaces if workspaces is not None else WorkspaceRegistry(settings.registry_path)
 
     app = FastAPI(title="IndieK local API", version=__version__)
     install_handlers(app)
@@ -118,60 +132,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "api_version": __version__}
 
     # -- signing identity (DESKTOP:KEY-ONBOARDING) -------------------------------------
 
-    identity = KeyProvider()
+    identity: Signer = signer if signer is not None else KeyProvider()
     app.state.identity = identity
-
-    def identity_out() -> IdentityOut:
-        author, source, available = identity.status()
-        return IdentityOut(
-            public_key=author.public_key_hex if author else None,
-            source=source.value,
-            keychain_available=available,
-        )
-
-    @app.get("/api/identity", response_model=IdentityOut)
-    def get_identity() -> IdentityOut:
-        return identity_out()
-
-    @app.post("/api/identity/generate", response_model=IdentityOut, status_code=201)
-    def generate_identity(payload: IdentityGenerate) -> IdentityOut:
-        identity.store(Author.generate(), replace=payload.replace)
-        return identity_out()
-
-    @app.post("/api/identity/import", response_model=IdentityOut, status_code=201)
-    def import_identity(payload: IdentityImport) -> IdentityOut:
-        if (payload.seed_hex is None) == (payload.backup is None):
-            raise InvalidKeyError("Send either seed_hex or a backup file with its password.")
-        if payload.seed_hex is not None:
-            try:
-                author = Author.from_seed_hex(payload.seed_hex.strip())
-            except ValueError:
-                raise InvalidKeyError(
-                    "The key must be a 32-byte Ed25519 seed written as 64 hex characters."
-                ) from None
-        else:
-            if not payload.password:
-                raise InvalidKeyError("A backup file needs its password.")
-            author = identity.read_backup(payload.backup or "", payload.password)
-        identity.store(author, replace=payload.replace)
-        return identity_out()
-
-    @app.post("/api/identity/backup")
-    def backup_identity(payload: IdentityBackup) -> Response:
-        author, data = identity.backup(payload.password)
-        filename = f"indiek-key-{author.public_key_hex[:8]}.ikkey"
-        return Response(
-            content=data,
-            media_type="application/json",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Cache-Control": "no-store",
-            },
-        )
+    if isinstance(identity, KeyManager):
+        _add_identity_routes(app, identity)
 
     api = APIRouter(prefix="/api/workspaces")
 
@@ -307,6 +275,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
+def _add_identity_routes(app: FastAPI, manager: KeyManager) -> None:
+    """The signing-key management routes (DESKTOP:KEY-ONBOARDING)."""
+
+    def identity_out() -> IdentityOut:
+        author, source, available = manager.status()
+        return IdentityOut(
+            public_key=author.public_key_hex if author else None,
+            source=source.value,
+            keychain_available=available,
+        )
+
+    @app.get("/api/identity", response_model=IdentityOut)
+    def get_identity() -> IdentityOut:
+        return identity_out()
+
+    @app.post("/api/identity/generate", response_model=IdentityOut, status_code=201)
+    def generate_identity(payload: IdentityGenerate) -> IdentityOut:
+        manager.store(Author.generate(), replace=payload.replace)
+        return identity_out()
+
+    @app.post("/api/identity/import", response_model=IdentityOut, status_code=201)
+    def import_identity(payload: IdentityImport) -> IdentityOut:
+        if (payload.seed_hex is None) == (payload.backup is None):
+            raise InvalidKeyError("Send either seed_hex or a backup file with its password.")
+        if payload.seed_hex is not None:
+            try:
+                author = Author.from_seed_hex(payload.seed_hex.strip())
+            except ValueError:
+                raise InvalidKeyError(
+                    "The key must be a 32-byte Ed25519 seed written as 64 hex characters."
+                ) from None
+        else:
+            if not payload.password:
+                raise InvalidKeyError("A backup file needs its password.")
+            author = manager.read_backup(payload.backup or "", payload.password)
+        manager.store(author, replace=payload.replace)
+        return identity_out()
+
+    @app.post("/api/identity/backup")
+    def backup_identity(payload: IdentityBackup) -> Response:
+        author, data = manager.backup(payload.password)
+        filename = f"indiek-key-{author.public_key_hex[:8]}.ikkey"
+        return Response(
+            content=data,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+
 def bind_loopback(host: str, port: int | None) -> socket.socket:
     """A listening socket on ``host``; ``port=None`` lets the OS pick a free port."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -323,10 +343,30 @@ def launch_url(host: str, port: int, launch_token: str) -> str:
     return f"http://{host}:{port}{SESSION_PATH}?token={launch_token}"
 
 
-def _serve(app: FastAPI, sockets: list[socket.socket]) -> None:
-    import uvicorn
+def _stop_on_eof(stream: BinaryIO, server: uvicorn.Server) -> None:
+    """Read (and discard) ``stream`` until EOF, then ask ``server`` to shut down."""
+    while stream.read(4096):
+        pass
+    server.should_exit = True
 
-    uvicorn.Server(uvicorn.Config(app, log_level="info")).run(sockets=sockets)
+
+def _serve(
+    app: FastAPI,
+    sockets: list[socket.socket],
+    *,
+    handshake: bool = False,
+    exit_on_stdin_eof: bool = False,
+) -> None:
+    import uvicorn
+    from uvicorn.config import LOGGING_CONFIG
+
+    # Handshake mode: stdout carries only the handshake line, so uvicorn's own logging
+    # config (access log on stdout) is skipped and its loggers reach the root logger (stderr).
+    log_config = None if handshake else LOGGING_CONFIG
+    server = uvicorn.Server(uvicorn.Config(app, log_level="info", log_config=log_config))
+    if exit_on_stdin_eof:
+        threading.Thread(target=_stop_on_eof, args=(sys.stdin.buffer, server), daemon=True).start()
+    server.run(sockets=sockets)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -335,6 +375,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument(
         "--no-browser", action="store_true", help="print the launch URL without opening it"
+    )
+    parser.add_argument(
+        "--handshake",
+        action="store_true",
+        help="for a parent process (desktop shell): print one JSON line "
+        '{"indiek_api", "port", "launch_url"} on stdout, log to stderr, never open a browser',
+    )
+    parser.add_argument(
+        "--exit-on-stdin-eof",
+        action="store_true",
+        help="shut down when stdin is closed (the parent process went away)",
     )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
@@ -346,9 +397,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         launch = app.state.access.launch
         assert settings.port is not None and launch is not None
         url = launch_url(settings.host, settings.port, launch)
-        print(f"IndieK Desktop: open {url}", flush=True)
-        if settings.open_browser and not args.no_browser:
-            webbrowser.open(url)
-        _serve(app, [sock])
+        if args.handshake:
+            line = {"indiek_api": __version__, "port": settings.port, "launch_url": url}
+            print(json.dumps(line), flush=True)
+        else:
+            print(f"IndieK Desktop: open {url}", flush=True)
+            if settings.open_browser and not args.no_browser:
+                webbrowser.open(url)
+        _serve(app, [sock], handshake=args.handshake, exit_on_stdin_eof=args.exit_on_stdin_eof)
     finally:
         sock.close()

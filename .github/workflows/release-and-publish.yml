@@ -1,0 +1,39 @@
+name: Release and Publish to PyPI
+
+# The owner publishes: this runs only when the owner pushes a version tag.
+on:
+  push:
+    tags:
+      - '*.*.*' # Matches 0.17.0, 1.0.0, etc.
+
+jobs:
+  build-release-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # Required for trusted publishing to PyPI
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Lint and test
+        run: |
+          uv run --locked ruff check .
+          uv run --locked pytest -q
+
+      - name: Build package
+        run: uv build
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

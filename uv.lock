@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.14"
 
 [[package]]
@@ -251,11 +251,15 @@ wheels = [
 [[package]]
 name = "indiek"
 version = "1.3.0"
-source = { editable = "../public_archive" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
     { name = "pydantic" },
     { name = "pynacl" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/60/37/aa31f761be4b58509f66a0e531b4efb3401a861d67cda3d8d9be5a9534a3/indiek-1.3.0.tar.gz", hash = "sha256:312cf90379d80ff275ad6cc4867659743159b4935bc62002da4d4f0f153ae206", size = 202885, upload-time = "2026-10-25T14:43:31.736Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/75/39dbf23a0516a5d95532a92d5bfb9cdd72c48ea95bca5741f9227a9310fe/indiek-1.3.0-py3-none-any.whl", hash = "sha256:7fd82bbb397fdedda4e84bed03c8e3dc4d137af14e878624d4b88ccb823fbd7a", size = 110599, upload-time = "2026-10-25T14:43:30.357Z" },
 ]
 
 [package.optional-dependencies]
@@ -263,31 +267,10 @@ keychain = [
     { name = "keyring" },
 ]
 
-[package.metadata]
-requires-dist = [
-    { name = "filelock", specifier = ">=4.2.4" },
-    { name = "keyring", marker = "extra == 'cli'", specifier = ">=25.7.0" },
-    { name = "keyring", marker = "extra == 'keychain'", specifier = ">=25.7.0" },
-    { name = "networkx", marker = "extra == 'viz'", specifier = ">=3.6.1" },
-    { name = "pydantic" },
-    { name = "pynacl" },
-    { name = "python-dotenv", marker = "extra == 'cli'" },
-    { name = "pyvis", marker = "extra == 'viz'", specifier = ">=0.3.2" },
-    { name = "rich", marker = "extra == 'cli'", specifier = ">=15.0.0" },
-]
-provides-extras = ["cli", "viz", "keychain"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "indiek", extras = ["cli"] },
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "ruff", specifier = ">=0.15.20" },
-]
-
 [[package]]
 name = "indiek-api"
-version = "0.16.0"
-source = { virtual = "." }
+version = "0.17.0"
+source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "indiek", extra = ["keychain"] },
@@ -305,7 +288,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.139.0" },
-    { name = "indiek", extras = ["keychain"], editable = "../public_archive" },
+    { name = "indiek", extras = ["keychain"], specifier = ">=1.3.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "uvicorn", specifier = ">=0.51.0" },
 ]

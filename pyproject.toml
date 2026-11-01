@@ -1,9 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "indiek-api"
-version = "0.16.0"
+version = "0.17.0"
 description = "Local HTTP API serving IndieK archives to the IndieK Desktop App."
 readme = "README.md"
 requires-python = ">=3.14"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Adrian Ernesto Radillo" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: FastAPI",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+]
 dependencies = [
     "fastapi>=0.139.0",
     "indiek[keychain]>=1.3.0",
@@ -11,8 +25,20 @@ dependencies = [
     "uvicorn>=0.51.0",
 ]
 
-[tool.uv.sources]
-indiek = { path = "../public_archive", editable = true }
+[project.urls]
+# Stub (2026-10-30): the repository is not on GitHub yet.
+Repository = "https://github.com/indiek/fastAPI"
+Changelog = "https://github.com/indiek/fastAPI/blob/main/CHANGELOG.md"
+
+[project.scripts]
+indiek-api = "indiek_api.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["indiek_api"]
+
+[tool.hatch.build.targets.sdist]
+# Explicit allow-list: never ship local files such as `.env*` in the sdist.
+only-include = ["indiek_api", "tests", "README.md", "CHANGELOG.md", "LICENSE"]
 
 [dependency-groups]
 dev = [

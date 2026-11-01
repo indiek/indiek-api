@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from indiek import Author
 
+from indiek_api import __version__
 from indiek_api.settings import Settings
 
 from conftest import SampleArchive, Workspace, api_client, open_archive, tamper_last_signature
@@ -35,7 +36,7 @@ def _assert_error(response, status: int, code: str) -> None:
 
 
 def test_health(client: TestClient) -> None:
-    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/health").json() == {"status": "ok", "api_version": __version__}
 
 
 def test_register_workspace_returns_its_identity(
