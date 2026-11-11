@@ -5,6 +5,10 @@
 Standalone repository, ready for PyPI as `indiek-api` (DESKTOP:REPO-SPLIT-1). No version bump yet:
 the owner releases `indiek-api` **1.0.0** on PyPI together with the first packaged desktop app.
 
+### Fixed
+- Project URLs (`Repository`, `Changelog`) now point to `https://github.com/indiek/indiek-api`;
+  the 0.17.0 PyPI page links to the non-existent `indiek/fastAPI` repository.
+
 ## 0.17.0 — 2026-11-01
 
 ### Changed

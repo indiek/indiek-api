@@ -26,9 +26,8 @@ dependencies = [
 ]
 
 [project.urls]
-# Stub (2026-10-30): the repository is not on GitHub yet.
-Repository = "https://github.com/indiek/fastAPI"
-Changelog = "https://github.com/indiek/fastAPI/blob/main/CHANGELOG.md"
+Repository = "https://github.com/indiek/indiek-api"
+Changelog = "https://github.com/indiek/indiek-api/blob/main/CHANGELOG.md"
 
 [project.scripts]
 indiek-api = "indiek_api.app:main"
