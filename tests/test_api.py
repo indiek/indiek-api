@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,13 @@ def _assert_error(response, status: int, code: str) -> None:
 
 def test_health(client: TestClient) -> None:
     assert client.get("/health").json() == {"status": "ok", "api_version": __version__}
+
+
+def test_version_is_the_one_in_pyproject() -> None:
+    # Regression: __version__ was hardcoded and stayed at 0.13.0 up to 0.17.0.
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    with pyproject.open("rb") as f:
+        assert __version__ == tomllib.load(f)["project"]["version"]
 
 
 def test_register_workspace_returns_its_identity(

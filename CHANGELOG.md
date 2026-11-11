@@ -2,10 +2,14 @@
 
 ## Unreleased
 
-Standalone repository, ready for PyPI as `indiek-api` (DESKTOP:REPO-SPLIT-1). No version bump yet:
-the owner releases `indiek-api` **1.0.0** on PyPI together with the first packaged desktop app.
+The owner releases `indiek-api` **1.0.0** on PyPI together with the first packaged desktop app.
+
+## 0.17.1 — 2026-11-11
 
 ### Fixed
+- `indiek_api.__version__` (reported by `/health` as `api_version` and by the `--handshake`
+  line) was hardcoded and still said `0.13.0`; it now comes from the installed package metadata
+  (single source: `pyproject.toml`). Regression test compares it with `pyproject.toml`.
 - Project URLs (`Repository`, `Changelog`) now point to `https://github.com/indiek/indiek-api`;
   the 0.17.0 PyPI page links to the non-existent `indiek/fastAPI` repository.
 
