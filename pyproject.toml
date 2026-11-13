@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "indiek-api"
-version = "0.17.1"
+version = "1.0.0"
 description = "Local HTTP API serving IndieK archives to the IndieK Desktop App."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -12,7 +12,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Adrian Ernesto Radillo" }]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Framework :: FastAPI",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",

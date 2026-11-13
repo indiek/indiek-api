@@ -2,7 +2,16 @@
 
 ## Unreleased
 
-The owner releases `indiek-api` **1.0.0** on PyPI together with the first packaged desktop app.
+## 1.0.0 — 2026-11-13
+
+First stable release, shipped inside the first packaged IndieK Desktop app (installers built and
+checked on macOS, Windows and Linux). No code change since 0.17.1.
+
+### Changed
+- From now on `indiek-api` follows semantic versioning: the HTTP routes and their JSON, the
+  command-line flags (`--handshake`, `--exit-on-stdin-eof`, …) and the `create_app(...)` seams
+  (`WorkspaceProvider`, `Signer`) change incompatibly only in a new major version.
+- PyPI classifier: `Development Status :: 5 - Production/Stable` (was `4 - Beta`).
 
 ## 0.17.1 — 2026-11-11
 

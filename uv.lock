@@ -269,7 +269,7 @@ keychain = [
 
 [[package]]
 name = "indiek-api"
-version = "0.17.1"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
