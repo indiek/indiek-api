@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- README: internal task codes removed from section titles (FOSSDOCS:NO-TASK-CODES-IN-READMES).
+
 ## 1.0.0 — 2026-11-13
 
 First stable release, shipped inside the first packaged IndieK Desktop app (installers built and

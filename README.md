@@ -90,7 +90,7 @@ Typical setups:
 - **Browser testing with a stable URL**: add `INDIEK_API_PORT=8765 INDIEK_API_TOKEN=<16+ chars>`
   and open `http://127.0.0.1:8765/api/session?token=<the token>` once per browser.
 
-### Launched by the desktop shell (DESKTOP:REPO-SPLIT-3)
+### Launched by the desktop shell
 
 The Tauri shell starts the server as a child process with two flags (both usable without Tauri):
 
@@ -101,7 +101,7 @@ The Tauri shell starts the server as a child process with two flags (both usable
 
 Try it: `uv run python -m indiek_api --handshake --exit-on-stdin-eof` (Ctrl-D stops it).
 
-### Embedding the API as a library (DESKTOP:REUSE-SEAMS)
+### Embedding the API as a library
 
 `create_app(settings=None, *, workspaces=None, signer=None)` accepts any object matching the
 protocols of `indiek_api/providers.py`: `WorkspaceProvider` (`list`, `register`, `remove`,
@@ -181,7 +181,7 @@ All archive routes live under `/api/workspaces/{workspace_id}`. Item references
 accept a UUID or an `e{n}` alias; tag references a UUID or an `m{n}` alias.
 Full request/response schemas: `http://127.0.0.1:<port>/docs`.
 
-### Access control (DESKTOP:LOCALHOST-TOKEN)
+### Access control
 
 Design, threats and owner decisions: `project_management/Design.md`, cybersecurity section.
 
